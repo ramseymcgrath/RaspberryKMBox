@@ -4,3 +4,4 @@ build-*
 !.vscode/*
 lib/pio_usb
 .vscode/tasks.json
+lib/pio_usb
