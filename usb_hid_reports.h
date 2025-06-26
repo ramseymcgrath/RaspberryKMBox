@@ -43,4 +43,8 @@ bool is_mouse_buffer_empty(void);
 // Utility functions
 bool find_key_in_report(const hid_keyboard_report_t* report, uint8_t keycode);
 
+// External DMA buffers for report forwarding
+extern hid_keyboard_report_t kbd_dest_buffer;
+extern hid_mouse_report_t mouse_dest_buffer;
+
 #endif // USB_HID_REPORTS_H

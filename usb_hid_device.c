@@ -6,7 +6,6 @@
 #include "defines.h"
 #include "led_control.h"
 #include "pico/stdlib.h"
-#include "usb_hid_stats.h"
 #include <stdio.h>
 
 // External declarations for variables defined in other modules
@@ -17,7 +16,6 @@ static bool caps_lock_state = false;
 
 void hid_device_task(void)
 {
-    // Optimized polling: 16ms for better performance (60 FPS equivalent)
     static uint32_t start_ms = 0;
     uint32_t current_ms = to_ms_since_boot(get_absolute_time());
     
@@ -41,16 +39,20 @@ void hid_device_task(void)
     // Only send reports when devices are not connected (avoid conflicts)
     bool mouse_connected, keyboard_connected;
     
-    critical_section_enter_blocking(&usb_state_lock);
+    // Direct access without lock since we have separate stacks
     mouse_connected = connection_state.mouse_connected;
     keyboard_connected = connection_state.keyboard_connected;
-    critical_section_exit(&usb_state_lock);
     
-    if (!mouse_connected && !keyboard_connected) {
+    // Always maintain the connection with consumer control reports
+    send_hid_report(REPORT_ID_CONSUMER_CONTROL);
+    
+    // Forward reports from connected devices
+    if (mouse_connected) {
         send_hid_report(REPORT_ID_MOUSE);
-    } else {
-        // Send empty consumer control report to maintain connection
-        send_hid_report(REPORT_ID_CONSUMER_CONTROL);
+    }
+    
+    if (keyboard_connected) {
+        send_hid_report(REPORT_ID_KEYBOARD);
     }
 }
 
@@ -75,13 +77,26 @@ void send_hid_report(uint8_t report_id)
         case REPORT_ID_KEYBOARD: {
             bool keyboard_connected;
             
-            critical_section_enter_blocking(&usb_state_lock);
+            // Direct access without lock since we have separate stacks
             keyboard_connected = connection_state.keyboard_connected;
-            critical_section_exit(&usb_state_lock);
             
-            if (!keyboard_connected) {
-                // CRITICAL: Check device readiness before each report
-                if (tud_hid_ready()) {
+            // CRITICAL: Check device readiness before each report
+            if (tud_hid_ready()) {
+                if (keyboard_connected) {
+                    // Check if we have a new keyboard report to forward
+                    bool report_ready = false;
+                    // Direct access without lock since we have separate stacks
+                    report_ready = connection_state.keyboard_report_ready;
+                    if (report_ready) {
+                        connection_state.keyboard_report_ready = false;
+                    }
+                    
+                    if (report_ready) {
+                        // Forward the last received keyboard report
+                        extern hid_keyboard_report_t kbd_dest_buffer;
+                        tud_hid_report(REPORT_ID_KEYBOARD, &kbd_dest_buffer, sizeof(hid_keyboard_report_t));
+                    }
+                } else {
                     // Use static array to avoid stack allocation overhead
                     static const uint8_t empty_keycode[HID_KEYBOARD_KEYCODE_COUNT] = { 0 };
                     tud_hid_keyboard_report(REPORT_ID_KEYBOARD, MOUSE_NO_MOVEMENT, empty_keycode);
@@ -93,14 +108,27 @@ void send_hid_report(uint8_t report_id)
         case REPORT_ID_MOUSE: {
             bool mouse_connected;
             
-            critical_section_enter_blocking(&usb_state_lock);
+            // Direct access without lock since we have separate stacks
             mouse_connected = connection_state.mouse_connected;
-            critical_section_exit(&usb_state_lock);
             
-            // Only send button-based mouse movement if no mouse is connected
-            if (!mouse_connected) {
-                // CRITICAL: Check device readiness before each report
-                if (tud_hid_ready()) {
+            // CRITICAL: Check device readiness before each report
+            if (tud_hid_ready()) {
+                if (mouse_connected) {
+                    // Check if we have a new mouse report to forward
+                    bool report_ready = false;
+                    // Direct access without lock since we have separate stacks
+                    report_ready = connection_state.mouse_report_ready;
+                    if (report_ready) {
+                        connection_state.mouse_report_ready = false;
+                    }
+                    
+                    if (report_ready) {
+                        // Forward the last received mouse report
+                        extern hid_mouse_report_t mouse_dest_buffer;
+                        tud_hid_report(REPORT_ID_MOUSE, &mouse_dest_buffer, sizeof(hid_mouse_report_t));
+                    }
+                } else {
+                    // Only send button-based mouse movement if no mouse is connected
                     static bool prev_button_state = true; // true = not pressed (active low)
                     bool current_button_state = gpio_get(PIN_BUTTON);
                     

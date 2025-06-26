@@ -12,6 +12,7 @@
 #include "hardware/gpio.h"
 #include "hardware/uart.h"
 #include "pico/unique_id.h"
+#include "hardware/timer.h" // Include for time_us_32()
 
 #include "tusb.h"
 #include "defines.h"
@@ -23,7 +24,6 @@
 #include "init_state_machine.h"
 #include "state_management.h"
 #include "dma_manager.h"
-#include "usb_hid_stats.h"
 
 #if PIO_USB_AVAILABLE
 #include "pio_usb.h"
@@ -59,7 +59,6 @@ typedef struct {
 //--------------------------------------------------------------------+
 // Constants and Configuration
 //--------------------------------------------------------------------+
-static const uint32_t STATS_INTERVAL_MS = STATS_REPORT_INTERVAL_MS;
 static const uint32_t WATCHDOG_STATUS_INTERVAL_MS = WATCHDOG_STATUS_REPORT_INTERVAL_MS;
 
 //--------------------------------------------------------------------+
@@ -121,7 +120,7 @@ typedef struct {
 
 static void core1_main(void) {
     // EXTENDED delay for cold boot - core1 needs more time
-    sleep_ms(100);  // Increase from 10ms
+    sleep_ms(200);   // Let core0 finish setup
     
     LOG_INIT("Core1: Starting USB host initialization (cold boot)...");
     
@@ -231,10 +230,7 @@ static void core1_task_loop(void) {
  *
  * @return uint32_t Current time in microseconds
  */
-static inline uint32_t time_us_32(void) {
-    // Use the 64-bit timer and truncate to 32 bits
-    return (uint32_t)time_us_64();
-}
+// Using SDK's time_us_32() function from hardware/timer.h
 
 typedef struct {
     bool initialized;
@@ -283,10 +279,28 @@ static bool init_hid_hardware_acceleration(void) {
     accel_base[RP2350_ACCEL_CTRL] = RP2350_ACCEL_ENABLE | RP2350_ACCEL_DMA_MODE;
     
     // Set up dedicated DMA channels for HID processing
-    accel_ctx.hw_context = dma_manager_allocate_acceleration_channels(2);
-    if (!accel_ctx.hw_context) {
+    // Allocate memory for the hardware context
+    typedef struct {
+        int channel1;
+        int channel2;
+    } accel_hw_context_t;
+    
+    accel_hw_context_t* hw_context = (accel_hw_context_t*)malloc(sizeof(accel_hw_context_t));
+    if (!hw_context) {
         return false;
     }
+    
+    // Get two DMA channels for acceleration
+    hw_context->channel1 = dma_manager_get_core_channel("HID_ACCEL_1");
+    hw_context->channel2 = dma_manager_get_core_channel("HID_ACCEL_2");
+    
+    // Check if we got valid channels
+    if (hw_context->channel1 < 0 || hw_context->channel2 < 0) {
+        free(hw_context);
+        return false;
+    }
+    
+    accel_ctx.hw_context = hw_context;
     
     accel_ctx.initialized = true;
     accel_ctx.acceleration_mode = RP2350_ACCEL_MODE_HID_OPTIMIZED;
@@ -305,15 +319,9 @@ static void tuh_task_with_acceleration(void) {
     // Check if acceleration is properly initialized
     if (!accel_ctx.initialized) {
         // Fall back to standard processing if acceleration isn't available
-        uint64_t sw_start = time_us_64();
         tuh_task();
-        track_sw_processing_latency(sw_start);
-        increment_sw_fallback_reports();
         return;
     }
-    
-    // Start performance counter for hardware acceleration
-    uint64_t hw_start = time_us_64();
     
     // Access acceleration hardware registers
     uint32_t* accel_base = (uint32_t*)RP2350_HID_ACCEL_BASE;
@@ -333,47 +341,9 @@ static void tuh_task_with_acceleration(void) {
     if (accel_base[RP2350_ACCEL_STATUS] & RP2350_ACCEL_ERROR || timeout == 0) {
         // Hardware encountered an error or timed out, fall back to standard processing
         LOG_ERROR("HW acceleration error or timeout, falling back to SW processing");
-        
-        uint64_t sw_start = time_us_64();
         tuh_task();
-        track_sw_processing_latency(sw_start);
-        
-        // Update error counter
-        accel_ctx.performance_counters[3]++;
-        increment_hw_accel_errors();
-        increment_sw_fallback_reports();
     } else {
-        // Process any remaining software tasks that hardware couldn't handle
         tuh_task_minimal();
-        
-        // Update success counter
-        accel_ctx.performance_counters[0]++;
-        increment_hw_accel_reports();
-        
-        // Track hardware processing time
-        track_hw_processing_latency(hw_start);
-    }
-    
-    // Calculate processing time and update performance counter
-    uint32_t end_time = time_us_32();
-    uint32_t processing_time = end_time - (uint32_t)hw_start;
-    
-    // Update average processing time (simple moving average)
-    accel_ctx.performance_counters[1] =
-        (accel_ctx.performance_counters[1] * 7 + processing_time) / 8;
-    
-    // Update max processing time
-    if (processing_time > accel_ctx.performance_counters[2]) {
-        accel_ctx.performance_counters[2] = processing_time;
-    }
-    
-    // Periodically print hardware acceleration statistics (every 1000 calls)
-    static uint32_t stats_counter = 0;
-    if (++stats_counter >= 1000) {
-        #if ENABLE_STATS_LOGGING
-        print_hw_accel_stats();
-        #endif
-        stats_counter = 0;
     }
 }
 #endif // RP2350
@@ -384,28 +354,29 @@ static void tuh_task_with_acceleration(void) {
 //--------------------------------------------------------------------+
 
 static bool initialize_system(void) {
-    // Initialize stdio first for early debug output
+#if PIO_USB_AVAILABLE
+    // Set system clock to 120MHz FIRST (required for PIO USB - must be multiple of 12MHz)
+    if (!set_sys_clock_khz(PIO_USB_SYSTEM_CLOCK_KHZ, true)) {
+        // Try to initialize stdio with default clock for error reporting
+        stdio_init_all();
+        LOG_ERROR("CRITICAL: Failed to set system clock to %d kHz", PIO_USB_SYSTEM_CLOCK_KHZ);
+        return false;
+    }
+    
+    // Allow clock to stabilize before initializing UART
+    sleep_ms(100);  // CRITICAL: Wait for PLL to lock
+#endif
+    
+    // Initialize stdio AFTER setting the clock
     stdio_init_all();
     
-    // Add extended startup delay for cold boot stability
-    // Use the proper constant from defines.h instead of hardcoded value
+    // Add startup delay for boot stability
     sleep_ms(COLD_BOOT_STABILIZATION_MS);
     
     LOG_INIT("PICO PIO KMBox - Starting initialization...");
     LOG_INIT("Neopixel pins initialized (power OFF for cold boot stability)");
     
 #if PIO_USB_AVAILABLE
-    // Set system clock to 120MHz (required for PIO USB - must be multiple of 12MHz)
-    LOG_INIT("Setting system clock to %d kHz...", PIO_USB_SYSTEM_CLOCK_KHZ);
-    if (!set_sys_clock_khz(PIO_USB_SYSTEM_CLOCK_KHZ, true)) {
-        LOG_ERROR("CRITICAL: Failed to set system clock to %d kHz", PIO_USB_SYSTEM_CLOCK_KHZ);
-        return false;
-    }
-    
-    // Re-initialize stdio after clock change with proper delay
-    sleep_ms(100);  // Allow clock to stabilize
-    stdio_init_all();
-    sleep_ms(100);  // Allow UART to stabilize
     LOG_INIT("System clock set successfully to %d kHz", PIO_USB_SYSTEM_CLOCK_KHZ);
 #endif
     
@@ -517,20 +488,11 @@ static void process_button_input(system_state_t* state, uint32_t current_time) {
 //--------------------------------------------------------------------+
 
 static void report_hid_statistics(uint32_t current_time, uint32_t* stats_timer) {
-    if (!is_time_elapsed(current_time, *stats_timer, STATS_INTERVAL_MS)) {
-        return;
-    }
-
-    *stats_timer = current_time;
-    
+    // Check for pending hardware acceleration statistics (non-blocking approach)
     #if ENABLE_STATS_LOGGING
-    hid_stats_t stats;
-    get_hid_stats(&stats);
-    
     printf("=== HID Statistics ===\n");
     printf("Mouse: RX=%lu, TX=%lu\n", stats.mouse_reports_received, stats.mouse_reports_forwarded);
     printf("Keyboard: RX=%lu, TX=%lu\n", stats.keyboard_reports_received, stats.keyboard_reports_forwarded);
-    printf("Errors: %lu\n", stats.forwarding_errors);
     printf("Mouse connected: %s\n", is_mouse_connected() ? "YES" : "NO");
     printf("Keyboard connected: %s\n", is_keyboard_connected() ? "YES" : "NO");
     printf("=====================\n");
@@ -655,21 +617,23 @@ int main(void) {
     LOG_INIT("RP2040 detected - using standard configuration");
 #endif
     
-    // Set system clock with proper stabilization
-    LOG_INIT("Setting system clock...");  // Basic printf should work with default clock
+    // Set system clock FIRST with proper stabilization
     if (!set_sys_clock_khz(120000, true)) {
         // Clock setting failed - try to continue with default clock
-        LOG_ERROR("WARNING: Failed to set 120MHz clock, continuing with default");
+        // We can't log this yet since stdio isn't initialized
     }
     
     // CRITICAL: Extended delay after clock change for cold boot
-    sleep_ms(200);  // Let clock fully stabilize
+    sleep_ms(100);  // CRITICAL: Wait for PLL to lock
     
-    // Re-initialize stdio after clock change
+    // Initialize stdio ONCE after clock is stable
     stdio_init_all();
     
-    // Additional delay for UART stabilization after clock change
+    // Additional delay for UART stabilization
     sleep_ms(100);
+    
+    LOG_INIT("Setting system clock to 120MHz...");
+    LOG_INIT("System clock set to 120MHz");
     
     LOG_INIT("=== PIOKMBox Starting (Cold Boot Enhanced) ===");
 #ifdef RP2350
@@ -698,6 +662,7 @@ int main(void) {
     
     // Initialize USB device stack BEFORE enabling host power
     LOG_INIT("Initializing USB device stack on core0...");
+    // Don't set neopixel color yet - power isn't enabled
     if (!initialize_usb_device()) {
         LOG_ERROR("CRITICAL: USB Device initialization failed");
         return -1;
@@ -708,6 +673,7 @@ int main(void) {
     
     // NOW enable USB host power with extended stabilization
     LOG_INIT("Enabling USB host power...");
+    // Don't set neopixel color yet - power isn't enabled
     usb_host_enable_power();
     
 #ifdef RP2350
@@ -717,15 +683,16 @@ int main(void) {
 #endif
     
     // CRITICAL: Extended delay after power enable for cold boot
-    sleep_ms(1000);  // Much longer for cold boot reliability
+    sleep_ms(1000);  // Wait for power stabilization
     
     // Launch core1 with additional delay after power stabilization
     LOG_INIT("Launching core1 for USB host...");
+    // Don't set neopixel color yet - power isn't enabled
     multicore_reset_core1();
     multicore_launch_core1(core1_main);
     
     // Give core1 time to initialize before proceeding
-    sleep_ms(500);
+    sleep_ms(500);   // Wait for core1 to initialize
     
     // Initialize remaining systems
     LOG_INIT("Starting watchdog and final systems...");
@@ -734,7 +701,22 @@ int main(void) {
     
     // Enable neopixel power last
     sleep_ms(500);
+    LOG_INIT("Enabling neopixel power and setting status indicators...");
     neopixel_enable_power();
+    sleep_ms(100);  // Wait for neopixel power to stabilize
+    
+    // Disable activity flashes to ensure stable color display
+    LOG_INIT("Temporarily disabling activity flashes for stable color display");
+    neopixel_disable_activity_flashes(true);
+    
+    // Now it's safe to set colors
+    neopixel_set_color(COLOR_USB_DEVICE_ONLY);  // Green = ready
+    
+    // Keep activity flashes disabled for a short time to ensure color is visible
+    sleep_ms(500);
+    
+    // Re-enable activity flashes
+    neopixel_disable_activity_flashes(false);
     
     LOG_INIT("=== PIOKMBox Ready (Cold Boot Complete) ===");
 #ifdef RP2350

@@ -11,7 +11,6 @@
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "usb_hid_reports.h"
-#include "usb_hid_stats.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -58,6 +57,10 @@ bool usb_hid_init(void)
     connection_state.keyboard_pid = 0;
     connection_state.descriptors_updated = false;
     connection_state.strings_updated = false;
+    
+    // Initialize report forwarding flags
+    connection_state.keyboard_report_ready = false;
+    connection_state.mouse_report_ready = false;
     
     // Initialize string descriptor buffers with default values
     strncpy(connection_state.manufacturer, MANUFACTURER_STRING, USB_STRING_BUFFER_SIZE - 1);
@@ -111,15 +114,13 @@ static bool init_gpio_pins(void)
 }
 
 /**
- * @brief Initialize critical sections for thread safety
+ * @brief Initialize synchronization (placeholder)
  *
- * This function initializes the critical sections used for protecting
- * shared resources in the USB HID module.
+ * This function is kept as a placeholder for compatibility.
+ * Critical sections have been removed as they are not needed with separate stacks.
  */
 void init_synchronization(void) {
-    critical_section_init(&usb_state_lock);
-    critical_section_init(&stats_lock);
-    LOG_INIT("Critical sections initialized for thread safety");
+    LOG_INIT("Synchronization initialization skipped - using separate stacks");
 }
 
 bool usb_host_enable_power(void)

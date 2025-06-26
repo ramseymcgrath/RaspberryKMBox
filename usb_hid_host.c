@@ -78,7 +78,6 @@ void handle_device_disconnection(uint8_t dev_addr)
             LOG_VERBOSE("USB Host: Keyboard disconnected - keeping mouse VID/PID");
         }
         
-        // Keyboard disconnected (reduced logging)
     }
 }
 

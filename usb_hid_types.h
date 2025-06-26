@@ -48,6 +48,10 @@ typedef struct {
     uint16_t keyboard_pid;
     bool descriptors_updated;
     
+    // Report forwarding flags
+    bool keyboard_report_ready;
+    bool mouse_report_ready;
+    
     // String descriptor storage
     char manufacturer[USB_STRING_BUFFER_SIZE];
     char product[USB_STRING_BUFFER_SIZE];

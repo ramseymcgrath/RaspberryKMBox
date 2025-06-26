@@ -62,6 +62,7 @@ void neopixel_trigger_usb_reset_success(void);
 void neopixel_trigger_usb_reset_failed(void);
 void neopixel_set_status_override(system_status_t status);
 void neopixel_clear_status_override(void);
+void neopixel_disable_activity_flashes(bool disable);
 
 // Utility functions
 uint32_t neopixel_rgb_to_grb(uint32_t rgb);

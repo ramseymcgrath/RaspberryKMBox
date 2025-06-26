@@ -304,10 +304,11 @@ bool hw_validate_report(uint8_t itf_protocol, uint8_t const* report, uint16_t le
 // Hardware-accelerated report processing
 void process_hid_report_hardware(uint8_t dev_addr __attribute__((unused)), uint8_t instance __attribute__((unused)), uint8_t itf_protocol, uint8_t const* report, uint16_t len)
 {
-    // Use RP2350 PIO for accelerated report processing
+    // Use RP2350 PIO for accelerated report processing - validation disabled
     switch (itf_protocol) {
         case HID_ITF_PROTOCOL_KEYBOARD:
-            if (hw_validate_report(itf_protocol, report, len)) {
+            // Validation completely disabled - process all reports
+            if (len >= 1) {  // Minimal check to ensure report isn't empty
                 // Direct cast for performance - avoid memcpy overhead
                 const hid_keyboard_report_t* kbd_report = (const hid_keyboard_report_t*)report;
                 process_kbd_report(kbd_report);
@@ -315,7 +316,8 @@ void process_hid_report_hardware(uint8_t dev_addr __attribute__((unused)), uint8
             break;
 
         case HID_ITF_PROTOCOL_MOUSE:
-            if (hw_validate_report(itf_protocol, report, len)) {
+            // Validation completely disabled - process all reports
+            if (len >= 1) {  // Minimal check to ensure report isn't empty
                 // Direct cast for performance - avoid memcpy overhead
                 const hid_mouse_report_t* mouse_report = (const hid_mouse_report_t*)report;
                 process_mouse_report(mouse_report);

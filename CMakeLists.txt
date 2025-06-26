@@ -91,7 +91,6 @@ set(PROJECT_SOURCES
     usb_hid_descriptors.c
     usb_hid_strings.c
     usb_hid_callbacks.c
-    usb_hid_stats.c
     watchdog.c
     init_state_machine.c
     state_management.c
@@ -157,12 +156,16 @@ if(TARGET_CHIP STREQUAL "RP2350")
         PIN_USB_HOST_DP=10
         PIN_USB_HOST_DM=11
         USE_HARDWARE_ACCELERATION=1
+        DMA_NUM_CHANNELS=16
+        RP2350=1
     )
     message(STATUS "Added RP2350-specific definitions")
 else()
     target_compile_definitions(PIOKMbox PRIVATE
         TARGET_RP2040=1
         PICO_RP2040=1
+        DMA_NUM_CHANNELS=12
+        RP2040=1
     )
     message(STATUS "Added RP2040-specific definitions")
 endif()

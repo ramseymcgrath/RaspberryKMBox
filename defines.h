@@ -47,6 +47,10 @@
 // System clock configuration
 #define PIO_USB_SYSTEM_CLOCK_KHZ 120000 // 120MHz system clock required for PIO USB
 
+#ifndef DMA_NUM_CHANNELS
+#define DMA_NUM_CHANNELS    12  // RP2040 has 12 DMA channels
+#endif
+
 //--------------------------------------------------------------------+
 // RP2040/RP2350 SPECIFIC CONFIGURATION
 //--------------------------------------------------------------------+
@@ -81,10 +85,6 @@
 #endif
 #endif
 
-// Default WS2812 pin for RP2350
-#if defined(TARGET_RP2350)
-#define PICO_DEFAULT_WS2812_PIN 21
-#endif
 
 //--------------------------------------------------------------------+
 // TIMING CONSTANTS
@@ -114,7 +114,7 @@
 #define USB_RESET_COOLDOWN_MS           2000    // Post-reset cooldown
 
 // Main loop task timing
-#define HID_DEVICE_TASK_INTERVAL_MS     3       // 3ms = ~333 FPS for ultra-smooth operation
+#define HID_DEVICE_TASK_INTERVAL_MS     5       // 5ms = ~200 FPS for ultra-smooth operation
 #define WATCHDOG_TASK_INTERVAL_MS       100     // Watchdog update frequency
 #define WATCHDOG_INIT_DELAY_MS          8       // HID device task frequency
 #define VISUAL_TASK_INTERVAL_MS         50      // LED/neopixel update frequency
@@ -306,7 +306,7 @@
 //--------------------------------------------------------------------+
 
 #define MANUFACTURER_STRING             "Hurricane"
-#define PRODUCT_STRING                  "PIOKM Box"
+#define PRODUCT_STRING                  "Sneaky Mouse"
 
 //--------------------------------------------------------------------+
 // BUILD CONFIGURATION
@@ -347,7 +347,7 @@
 #endif
 
 #ifndef ENABLE_WATCHDOG_REPORTING
-#define ENABLE_WATCHDOG_REPORTING       0
+#define ENABLE_WATCHDOG_REPORTING       1
 #endif
 
 #ifndef ENABLE_NEOPIXEL_STATUS
@@ -355,21 +355,22 @@
 #endif
 
 #ifndef ENABLE_BUTTON_RESET
-#define ENABLE_BUTTON_RESET             0
+#define ENABLE_BUTTON_RESET             1
 #endif
 
 #define ENABLE_PERIODIC_REINIT          0
 #define ENABLE_FALLBACK_MODE            1
 
-//--------------------------------------------------------------------+
+//------------------------------------+
 // LOGGING CONFIGURATION
 //--------------------------------------------------------------------+
 
+#if !defined(ENABLE_VERBOSE_LOGGING) && !defined(ENABLE_INIT_LOGGING) && !defined(ENABLE_ERROR_LOGGING) && !defined(ENABLE_STATS_LOGGING)
 #if BUILD_CONFIG == BUILD_CONFIG_PRODUCTION
     #define ENABLE_VERBOSE_LOGGING      0
     #define ENABLE_INIT_LOGGING         1
     #define ENABLE_ERROR_LOGGING        1
-    #define ENABLE_STATS_LOGGING        1
+    #define ENABLE_STATS_LOGGING        0
 #elif BUILD_CONFIG == BUILD_CONFIG_TESTING
     #define ENABLE_VERBOSE_LOGGING      1
     #define ENABLE_INIT_LOGGING         1
@@ -379,9 +380,9 @@
     #define ENABLE_VERBOSE_LOGGING      1
     #define ENABLE_INIT_LOGGING         1
     #define ENABLE_ERROR_LOGGING        1
-    #define ENABLE_STATS_LOGGING        1
+    #define ENABLE_STATS_LOGGING        0
 #endif
-
+#endif
 //--------------------------------------------------------------------+
 // CONDITIONAL COMPILATION MACROS
 //--------------------------------------------------------------------+

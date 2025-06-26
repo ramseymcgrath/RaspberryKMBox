@@ -15,8 +15,9 @@
 #include "hardware/dma.h"
 #include "pico/mutex.h"
 
-// Total number of DMA channels available on RP2040
-#define DMA_NUM_CHANNELS 12
+#ifndef DMA_NUM_CHANNELS
+#define DMA_NUM_CHANNELS 12  // RP2040 has 12 DMA channels
+#endif
 
 // Core-specific channel reservations
 #define DMA_CORE0_CHANNEL_START 0
@@ -28,9 +29,8 @@
 // Core 0 channels
 #define DMA_CHANNEL_KEYBOARD    0  // Keyboard HID reports
 #define DMA_CHANNEL_MOUSE       1  // Mouse HID reports
-// Core 0 or shared channels
-#define DMA_CHANNEL_PIO_USB_TX  2  // PIO USB transmit
-// Core 1 channels (if used)
+// Core 1 channels
+#define DMA_CHANNEL_PIO_USB_TX  6  // PIO USB transmit (moved to core 1 range)
 // Add more channel definitions as needed
 
 // DMA channel status

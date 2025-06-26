@@ -50,6 +50,7 @@ typedef struct {
     bool activity_flash_active;
     uint32_t activity_flash_start_time;
     uint32_t activity_flash_color;
+    bool activity_flashes_disabled;
     
     bool caps_lock_flash_active;
     uint32_t caps_lock_flash_start_time;
@@ -96,6 +97,7 @@ static led_system_t g_led_system = {
         .status_override_active = false,
         .boot_start_time = 0,
         .activity_flash_active = false,
+        .activity_flashes_disabled = false,
         .caps_lock_flash_active = false,
         .breathing_enabled = true,
         .current_brightness = MAX_BRIGHTNESS,
@@ -332,7 +334,13 @@ void neopixel_enable_power(void)
     
     led_lock_release();
     
-    // Set initial color
+    // Initialize LED with BLACK first to clear any uninitialized data
+    neopixel_set_color(COLOR_OFF);
+    
+    // Small delay to ensure the LED has processed the OFF command
+    sleep_ms(5);
+    
+    // Now set the intended initial color
     neopixel_set_color(COLOR_BOOTING);
 
     printf("Neopixel fully initialized and powered on pin %d\n", PIN_NEOPIXEL);
@@ -685,7 +693,7 @@ static void trigger_activity_flash_internal(uint32_t color)
 {
     led_lock_acquire();
     
-    if (!g_led_controller.initialized || !validate_color(color)) {
+    if (!g_led_controller.initialized || !validate_color(color) || g_led_controller.activity_flashes_disabled) {
         led_lock_release();
         return;
     }
@@ -740,6 +748,21 @@ void neopixel_trigger_caps_lock_flash(void)
 //--------------------------------------------------------------------+
 // USB RESET FUNCTIONS
 //--------------------------------------------------------------------+
+
+/**
+ * @brief Enable or disable activity flashes
+ *
+ * This function can be used to temporarily disable activity flashes
+ * during initialization or when stable color display is needed.
+ *
+ * @param disable True to disable activity flashes, false to enable
+ */
+void neopixel_disable_activity_flashes(bool disable)
+{
+    led_lock_acquire();
+    g_led_controller.activity_flashes_disabled = disable;
+    led_lock_release();
+}
 
 void neopixel_trigger_usb_reset_pending(void)
 {

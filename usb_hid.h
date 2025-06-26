@@ -21,6 +21,5 @@
 #include "usb_hid_descriptors.h"
 #include "usb_hid_strings.h"
 #include "usb_hid_callbacks.h"
-#include "usb_hid_stats.h"
 
 #endif // USB_HID_H
