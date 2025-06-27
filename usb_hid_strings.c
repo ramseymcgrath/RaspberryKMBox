@@ -10,12 +10,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-
-#if PIO_USB_AVAILABLE
 #include "pio_usb.h"
 #include "lib/pio_usb/src/pio_usb.h"
 #include "lib/pio_usb/src/pio_usb_ll.h"
-#endif
 
 // External declarations for variables defined in other modules
 extern device_connection_state_t connection_state;

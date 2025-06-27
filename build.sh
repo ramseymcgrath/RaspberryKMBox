@@ -19,6 +19,7 @@ if ((BASH_VERSINFO[0] >= 4)); then
     [rp2040]="adafruit_feather_rp2040_usb_host"
     [rp2040_optimized]="adafruit_feather_rp2040_usb_host_optimized"
     [rp2350]="adafruit_feather_rp2350"
+    [rp2350_xiao]="seeed_xiao_rp2350"
   )
   
   # Function to get board name
@@ -33,6 +34,7 @@ else
       "rp2040") echo "adafruit_feather_rp2040_usb_host" ;;
       "rp2040_optimized") echo "adafruit_feather_rp2040_usb_host_optimized" ;;
       "rp2350") echo "adafruit_feather_rp2350" ;;
+      "rp2350_xiao") echo "seeed_xiao_rp2350" ;;
       *) echo "unknown" ;;
     esac
   }
@@ -88,9 +90,10 @@ usage() {
 ${BOLD}Usage:${NC} $0 [target] [options]
 
 ${BOLD}Targets:${NC}
-  rp2040        - Build for RP2040 (Raspberry Pi Pico)
-  rp2350        - Build for RP2350 (Raspberry Pi Pico 2)
-  both          - Build for both RP2040 and RP2350 (default)
+  rp2040        - Build for RP2040 (Adafruit Feather RP2040 USB Host)
+  rp2350        - Build for RP2350 (Adafruit Feather RP2350)
+  rp2350_xiao   - Build for RP2350 (Seeed XIAO RP2350)
+  both          - Build for both RP2040 and RP2350 Feather boards (default)
 
 ${BOLD}Options:${NC}
   --clean       - Clean build directories before building
@@ -128,6 +131,8 @@ build_target() {
   # Use build directory names that match VS Code tasks
   if [[ "$chip" == "rp2040" ]]; then
     local build_dir="build-pico"
+  elif [[ "$chip" == "rp2350_xiao" ]]; then
+    local build_dir="build-xiao-rp2350"
   else
     local build_dir="build-pico2"
   fi
@@ -183,6 +188,8 @@ flash_firmware() {
   # Use build directory names that match VS Code tasks
   if [[ "$chip" == "rp2040" ]]; then
     local build_dir="build-pico"
+  elif [[ "$chip" == "rp2350_xiao" ]]; then
+    local build_dir="build-xiao-rp2350"
   else
     local build_dir="build-pico2"
   fi
@@ -224,6 +231,8 @@ print_manual_flash_instructions() {
   # Use build directory names that match VS Code tasks
   if [[ "$chip" == "rp2040" ]]; then
     local build_dir="build-pico"
+  elif [[ "$chip" == "rp2350_xiao" ]]; then
+    local build_dir="build-xiao-rp2350"
   else
     local build_dir="build-pico2"
   fi
@@ -253,7 +262,7 @@ JOBS="$DEFAULT_JOBS"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    rp2040|rp2350|both)
+    rp2040|rp2350|rp2350_xiao|both)
       TARGET="$1"
       ;;
     --clean)
@@ -278,7 +287,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate target
-if [[ "$TARGET" != "rp2040" && "$TARGET" != "rp2350" && "$TARGET" != "both" ]]; then
+if [[ "$TARGET" != "rp2040" && "$TARGET" != "rp2350" && "$TARGET" != "rp2350_xiao" && "$TARGET" != "both" ]]; then
   print_error "Invalid target: $TARGET"
   usage
 fi
@@ -314,6 +323,17 @@ case "$TARGET" in
       read -rp "Would you like to flash the RP2350 firmware? (y/n) " response
       if [[ "$response" =~ ^[Yy]$ ]]; then
         flash_firmware "rp2350"
+      fi
+    fi
+    ;;
+  "rp2350_xiao")
+    TOTAL_COUNT=1
+    if build_target "rp2350_xiao"; then
+      SUCCESS_COUNT=1
+      echo ""
+      read -rp "Would you like to flash the Seeed XIAO RP2350 firmware? (y/n) " response
+      if [[ "$response" =~ ^[Yy]$ ]]; then
+        flash_firmware "rp2350_xiao"
       fi
     fi
     ;;

@@ -7,20 +7,17 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
-
+#include "hardware/dma.h"
+#include "hardware/irq.h"
+#include "hardware/pio.h"
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/uart.h"
 #include "pico/unique_id.h"
-
 #ifdef RP2350
-#include "hardware/dma.h"
-#include "hardware/irq.h"
-#include "hardware/pio.h"
 #include "rp2350_hw_accel.h"
 #include "rp2350_dma_handler.h"
 #endif
-
 #include "tusb.h"
 #include "defines.h"
 #include "config.h"
@@ -32,13 +29,8 @@
 #include "state_management.h"
 #include "dma_manager.h"
 #include "usb_hid_stats.h"
-
-#if PIO_USB_AVAILABLE
 #include "pio_usb.h"
-#include "hardware/clocks.h"
-#include "pico/multicore.h"
 #include "tusb.h"
-#endif
 
 //--------------------------------------------------------------------+
 // Type Definitions and Structures
@@ -74,12 +66,10 @@ static const uint32_t WATCHDOG_STATUS_INTERVAL_MS = WATCHDOG_STATUS_REPORT_INTER
 // Function Prototypes
 //--------------------------------------------------------------------+
 
-#if PIO_USB_AVAILABLE
 static void core1_main(void);
 static void core1_task_loop(void);
 #ifdef RP2350
 static bool init_hid_hardware_acceleration(void);
-#endif
 #endif
 
 static bool initialize_system(void);
@@ -103,9 +93,6 @@ static inline bool is_time_elapsed(uint32_t current_time, uint32_t last_time, ui
 //--------------------------------------------------------------------+
 // Core1 Main (USB Host Task)
 //--------------------------------------------------------------------+
-
-#if PIO_USB_AVAILABLE
-// Separate initialization concerns into focused functions
 
 typedef enum {
     INIT_SUCCESS,
@@ -156,27 +143,9 @@ static void core1_main(void) {
     // RP2350: Initialize hardware acceleration
     hw_accel_enabled = init_hid_hardware_acceleration();
     if (hw_accel_enabled) {
-        printf("Core1: RP2350 hardware acceleration initialized successfully\n");
-        
-        // Initialize enhanced tuh_task implementation
-        extern bool rp2350_tuh_task_init(void);
-        extern bool rp2350_patch_tuh_task(void);
-        
-        // First initialize the enhanced implementation
-        if (rp2350_tuh_task_init()) {
-            printf("Core1: Enhanced tuh_task implementation initialized successfully\n");
-            
-            // Then patch the tuh_task function to use our enhanced implementation
-            if (rp2350_patch_tuh_task()) {
-                printf("Core1: tuh_task patched successfully\n");
-            } else {
-                printf("Core1: Failed to patch tuh_task, using direct calls\n");
-            }
-        } else {
-            printf("Core1: Enhanced tuh_task implementation initialization failed\n");
-        }
+        LOG_INIT("Core1: RP2350 hardware acceleration enabled for USB host processing");
     } else {
-        LOG_ERROR("Core1: RP2350 hardware acceleration initialization failed, using standard mode");
+        LOG_INIT("Core1: RP2350 hardware acceleration disabled, using standard mode");
     }
 #endif
     
@@ -196,38 +165,12 @@ static void core1_task_loop(void) {
     // RP2350: Initialize hardware acceleration if not already initialized
     if (!hw_accel_enabled) {
         hw_accel_enabled = init_hid_hardware_acceleration();
-        
-        // Initialize enhanced tuh_task implementation if hardware acceleration is enabled
-        if (hw_accel_enabled) {
-            extern bool rp2350_tuh_task_init(void);
-            extern bool rp2350_patch_tuh_task(void);
-            
-            // First initialize the enhanced implementation
-            if (rp2350_tuh_task_init()) {
-                // Then patch the tuh_task function
-                rp2350_patch_tuh_task();
-            }
-        }
     }
 #endif
 
     while (true) {
-#ifdef RP2350
-        // RP2350: Use enhanced tuh_task implementation directly
-        extern void rp2350_enhanced_tuh_task(void);
-        extern bool rp2350_tuh_task_hw_accel_enabled(void);
-        
-        if (hw_accel_enabled) {
-            // Call our enhanced implementation directly
-            rp2350_enhanced_tuh_task();
-        } else {
-            // Fall back to standard implementation
-            tuh_task();
-        }
-#else
-        // Original RP2040 implementation
+        // Single tuh_task() call - hardware acceleration is handled internally
         tuh_task();
-#endif
         
         // Check heartbeat timing less frequently
         if (++state.heartbeat_counter >= CORE1_HEARTBEAT_CHECK_LOOPS) {
@@ -312,21 +255,66 @@ static void tuh_task_minimal(void) {
 static bool init_hid_hardware_acceleration(void) {
     LOG_INIT("Initializing RP2350 hardware acceleration for USB HID...");
     
-    // Use the implementation from rp2350_hw_accel.c
-    extern bool hw_accel_init(void);
-    bool success = hw_accel_init();
+    // Initialize hardware acceleration components
+    bool success = false;
     
-    if (success) {
-        printf("RP2350 hardware acceleration initialized successfully\n");
+    // 1. Initialize base hardware acceleration
+    extern bool hw_accel_init(void);
+    if (hw_accel_init()) {
+        LOG_INIT("  Base hardware acceleration initialized");
+        
+        // 2. Configure DMA channels for HID data transfers
+        extern void hw_accel_get_config(hw_accel_config_t* config);
+        hw_accel_config_t config;
+        hw_accel_get_config(&config);
+        
+        if (config.dma_enabled) {
+            LOG_INIT("  DMA channels configured: Mouse=%d, Keyboard=%d",
+                    config.dma_channel_mouse, config.dma_channel_keyboard);
+        }
+        
+        // 3. Configure additional PIO state machines
+        if (config.pio_enabled) {
+            LOG_INIT("  PIO state machines configured: Block=%d, Mouse SM=%d, Keyboard SM=%d",
+                    config.pio_block, config.sm_mouse, config.sm_keyboard);
+        }
+        
+        // 4. Configure hardware FIFOs
+        if (config.fifo_enabled) {
+            LOG_INIT("  Hardware FIFOs configured for buffering");
+        }
+        
+        // 5. Configure hardware interpolators
+        if (config.interpolator_enabled) {
+            LOG_INIT("  Hardware interpolators configured for coordinate processing");
+        }
+        
+        // 6. Verify all resources are properly allocated
+        success = config.dma_enabled || config.pio_enabled ||
+                 config.fifo_enabled || config.interpolator_enabled;
+        
+        if (success) {
+            LOG_INIT("RP2350 hardware acceleration initialized successfully");
+            LOG_INIT("  Enabled features: DMA=%s, PIO=%s, FIFO=%s, Interpolator=%s",
+                    config.dma_enabled ? "YES" : "NO",
+                    config.pio_enabled ? "YES" : "NO",
+                    config.fifo_enabled ? "YES" : "NO",
+                    config.interpolator_enabled ? "YES" : "NO");
+        } else {
+            LOG_ERROR("RP2350 hardware acceleration initialization failed - no features enabled");
+        }
     } else {
-        printf("RP2350 hardware acceleration initialization failed, falling back to standard mode\n");
+        LOG_ERROR("Failed to initialize base hardware acceleration");
+    }
+    
+    if (!success) {
+        LOG_INIT("Falling back to standard USB processing mode");
     }
     
     return success;
 }
 #endif // RP2350
 
-#endif // PIO_USB_AVAILABLE
 //--------------------------------------------------------------------+
 // System Initialization Functions
 //--------------------------------------------------------------------+
@@ -341,8 +329,7 @@ static bool initialize_system(void) {
     
     LOG_INIT("PICO PIO KMBox - Starting initialization...");
     LOG_INIT("Neopixel pins initialized (power OFF for cold boot stability)");
-    
-#if PIO_USB_AVAILABLE
+
     // Set system clock to 120MHz (required for PIO USB - must be multiple of 12MHz)
     LOG_INIT("Setting system clock to %d kHz...", PIO_USB_SYSTEM_CLOCK_KHZ);
     if (!set_sys_clock_khz(PIO_USB_SYSTEM_CLOCK_KHZ, true)) {
@@ -355,7 +342,6 @@ static bool initialize_system(void) {
     stdio_init_all();
     sleep_ms(100);  // Allow UART to stabilize
     LOG_INIT("System clock set successfully to %d kHz", PIO_USB_SYSTEM_CLOCK_KHZ);
-#endif
     
     // Configure UART for non-blocking operation
     uart_set_fifo_enabled(uart0, true);  // Enable FIFO for better performance

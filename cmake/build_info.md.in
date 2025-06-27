@@ -1,0 +1,45 @@
+# @PROJECT_NAME@ Build Information
+
+## Project Details
+- **Name**: @PROJECT_NAME@
+- **Version**: @PROJECT_VERSION@
+- **Description**: @PROJECT_DESCRIPTION@
+
+## Build Configuration
+- **Build Type**: @CMAKE_BUILD_TYPE@
+- **Build Date**: @BUILD_DATE@
+- **Build Time**: @BUILD_TIME@
+- **CMake Version**: @CMAKE_VERSION@
+- **Generator**: @CMAKE_GENERATOR@
+
+## Target Configuration
+- **Board**: @BOARD_DESCRIPTION@ (@TARGET_BOARD@)
+- **Chip**: @TARGET_CHIP@
+- **SDK Version**: @sdkVersion@
+
+## Compiler Information
+- **C Compiler**: @CMAKE_C_COMPILER_ID@ @CMAKE_C_COMPILER_VERSION@
+- **C++ Compiler**: @CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@
+- **C Standard**: C@CMAKE_C_STANDARD@
+- **C++ Standard**: C++@CMAKE_CXX_STANDARD@
+
+## Build Options
+- **UART Output**: @ENABLE_UART_OUTPUT@
+- **USB Output**: @ENABLE_USB_OUTPUT@
+- **Verbose Build**: @ENABLE_VERBOSE_BUILD@
+
+## Directories
+- **Source Directory**: @CMAKE_SOURCE_DIR@
+- **Binary Directory**: @CMAKE_BINARY_DIR@
+- **SDK Path**: @PICO_SDK_PATH@
+
+## Libraries
+The following libraries are linked:
+@PROJECT_LIBRARIES@
+
+## Source Files
+The following source files are compiled:
+@PROJECT_SOURCES@
+
+---
+*This file was automatically generated during the build process.*

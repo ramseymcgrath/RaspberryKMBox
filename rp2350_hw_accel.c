@@ -358,54 +358,77 @@ void hw_accel_reset_stats(void) {
 }
 
 /**
- * @brief Enhanced TinyUSB host task with hardware acceleration
- * 
- * This function enhances the standard tuh_task() function with RP2350-specific
- * hardware acceleration features.
- * 
- * @return true if the task was processed successfully, false otherwise
+ * @brief Process pending hardware-accelerated HID operations
+ *
+ * This function processes any pending hardware-accelerated HID operations
+ * before the standard USB host task runs. It's designed to be called from
+ * within the wrapped tuh_task() implementation.
+ *
+ * @return true if any operations were processed, false otherwise
  */
 bool hw_accel_tuh_task(void) {
-    // First, process any pending hardware-accelerated operations
-    if (hw_accel_enabled) {
-        // Process hardware FIFO buffers if enabled
-        if (hw_accel_config.fifo_enabled) {
-            // Process mouse FIFO
-            if (!mouse_fifo.empty) {
-                hid_mouse_report_t* report = (hid_mouse_report_t*)&mouse_fifo.data[mouse_fifo.read_index];
-                bool success = tud_hid_mouse_report(REPORT_ID_MOUSE, report->buttons, report->x, report->y, report->wheel, 0);
-                
-                if (success) {
-                    // Update FIFO state
-                    mouse_fifo.read_index = (mouse_fifo.read_index + sizeof(hid_mouse_report_t)) % mouse_fifo.size;
-                    mouse_fifo.full = false;
-                    if (mouse_fifo.read_index == mouse_fifo.write_index) {
-                        mouse_fifo.empty = true;
-                    }
-                }
-            }
+    bool operations_processed = false;
+    
+    // Only process if hardware acceleration is enabled
+    if (!hw_accel_enabled) {
+        return false;
+    }
+    
+    // Process hardware FIFO buffers if enabled
+    if (hw_accel_config.fifo_enabled) {
+        // Process mouse FIFO
+        while (!mouse_fifo.empty) {
+            hid_mouse_report_t* report = (hid_mouse_report_t*)&mouse_fifo.data[mouse_fifo.read_index];
+            bool success = tud_hid_mouse_report(REPORT_ID_MOUSE, report->buttons, report->x, report->y, report->wheel, 0);
             
-            // Process keyboard FIFO
-            if (!keyboard_fifo.empty) {
-                hid_keyboard_report_t* report = (hid_keyboard_report_t*)&keyboard_fifo.data[keyboard_fifo.read_index];
-                bool success = tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(hid_keyboard_report_t));
-                
-                if (success) {
-                    // Update FIFO state
-                    keyboard_fifo.read_index = (keyboard_fifo.read_index + sizeof(hid_keyboard_report_t)) % keyboard_fifo.size;
-                    keyboard_fifo.full = false;
-                    if (keyboard_fifo.read_index == keyboard_fifo.write_index) {
-                        keyboard_fifo.empty = true;
-                    }
+            if (success) {
+                // Update FIFO state
+                mouse_fifo.read_index = (mouse_fifo.read_index + sizeof(hid_mouse_report_t)) % mouse_fifo.size;
+                mouse_fifo.full = false;
+                if (mouse_fifo.read_index == mouse_fifo.write_index) {
+                    mouse_fifo.empty = true;
                 }
+                operations_processed = true;
+            } else {
+                // If we can't send the report, stop processing to avoid losing data
+                break;
+            }
+        }
+        
+        // Process keyboard FIFO
+        while (!keyboard_fifo.empty) {
+            hid_keyboard_report_t* report = (hid_keyboard_report_t*)&keyboard_fifo.data[keyboard_fifo.read_index];
+            bool success = tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(hid_keyboard_report_t));
+            
+            if (success) {
+                // Update FIFO state
+                keyboard_fifo.read_index = (keyboard_fifo.read_index + sizeof(hid_keyboard_report_t)) % keyboard_fifo.size;
+                keyboard_fifo.full = false;
+                if (keyboard_fifo.read_index == keyboard_fifo.write_index) {
+                    keyboard_fifo.empty = true;
+                }
+                operations_processed = true;
+            } else {
+                // If we can't send the report, stop processing to avoid losing data
+                break;
             }
         }
     }
     
-    // Then call the standard tuh_task() function
-    tuh_task();
+    // Check for completed DMA transfers
+    if (hw_accel_config.dma_enabled) {
+        // Check if any DMA transfers have completed without using interrupts
+        if (dma_channel_is_busy(hw_accel_config.dma_channel_mouse) == false) {
+            // Mouse DMA might have completed
+            operations_processed = true;
+        }
+        if (dma_channel_is_busy(hw_accel_config.dma_channel_keyboard) == false) {
+            // Keyboard DMA might have completed
+            operations_processed = true;
+        }
+    }
     
-    return true;
+    return operations_processed;
 }
 
 /**

@@ -5,18 +5,18 @@
  * HID processing on the RP2350.
  */
 
-#include "rp2350_dma_handler.h"
 #include "defines.h"
 #include <stdio.h>
 #include "usb_hid_types.h"
 
-#ifdef RP2350
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "tusb.h"
 #include "class/hid/hid.h"
 #include "usb_hid_types.h"
+#ifdef RP2350
 #include "rp2350_hw_accel.h"
+#include "rp2350_dma_handler.h"
 
 // No external declarations needed
 

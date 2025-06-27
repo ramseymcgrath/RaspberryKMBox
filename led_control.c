@@ -474,8 +474,6 @@ static system_status_t determine_system_status(void)
 
     // After boot timeout, determine actual status based on USB connections
     const bool device_mounted = tud_mounted();
-    
-#if PIO_USB_AVAILABLE
     const bool host_mounted = tuh_mounted(1);
     const bool mouse_connected = is_mouse_connected();
     const bool keyboard_connected = is_keyboard_connected();
@@ -512,14 +510,6 @@ static system_status_t determine_system_status(void)
     else {
         return STATUS_USB_HOST_ONLY;
     }
-#else
-    // PIO USB not available, only check device
-    if (device_mounted) {
-        return STATUS_USB_DEVICE_ONLY;
-    } else {
-        return STATUS_USB_DEVICE_ONLY;  // Still show device status even if not mounted
-    }
-#endif
 }
 
 static void apply_status_change(system_status_t new_status)

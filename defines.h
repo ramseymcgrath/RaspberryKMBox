@@ -26,13 +26,21 @@
 #define PIN_USB_5V              (18u)   // Power pin for USB host
 #endif
 #ifndef PIN_LED
-#define PIN_LED                 (13u)   // Status LED pin
+#define PIN_LED                 PICO_DEFAULT_LED_PIN
 #endif
+
 #ifndef PIN_NEOPIXEL
-#define PIN_NEOPIXEL            (21u)   // Neopixel data pin
+#ifndef PICO_DEFAULT_WS2812_PIN
+#define PICO_DEFAULT_WS2812_PIN 21     // Default Neopixel data pin
+#define PIN_NEOPIXEL            PICO_DEFAULT_WS2812_PIN // Neopixel data pin
 #endif
+#endif
+
 #ifndef NEOPIXEL_POWER
-#define NEOPIXEL_POWER          (20u)   // Neopixel power pin
+#ifndef PICO_DEFAULT_WS2812_POWER_PIN
+#define PICO_DEFAULT_WS2812_POWER_PIN 22 // Default Neopixel power pin
+#define NEOPIXEL_POWER  PICO_DEFAULT_WS2812_POWER_PIN // Neopixel power pin
+#endif
 #endif
 
 // USB port configuration
@@ -52,38 +60,23 @@
 //--------------------------------------------------------------------+
 
 // On some samples, the xosc can take longer to stabilize than is usual
+#ifndef PICO_XOSC_STARTUP_DELAY_MULTIPLIER
 #define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64
+#endif
 
 // Use slower generic flash access for RP2040
+#ifndef PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H
 #define PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H 1
+#endif
 
 // Flash SPI clock divider (RP2040=4, RP2350=2)
 #ifndef PICO_FLASH_SPI_CLKDIV
-#if defined(TARGET_RP2350)
-#define PICO_FLASH_SPI_CLKDIV 2  // RP2350 default
-#else
-#define PICO_FLASH_SPI_CLKDIV 4  // RP2040 default
-#endif
+#define PICO_FLASH_SPI_CLKDIV 4
 #endif
 
 // Flash size (8MB)
 #ifndef PICO_FLASH_SIZE_BYTES
 #define PICO_FLASH_SIZE_BYTES (8 * 1024 * 1024)
-#endif
-
-// Chip revision support
-#if defined(TARGET_RP2350)
-#define PICO_RP2350A 1              // RP2350 variant
-#define PICO_RP2350_A2_SUPPORTED 1  // Support A2 revision for RP2350
-#else
-#ifndef PICO_RP2040_B0_SUPPORTED
-#define PICO_RP2040_B0_SUPPORTED 0  // All RP2040 boards have B1
-#endif
-#endif
-
-// Default WS2812 pin for RP2350
-#if defined(TARGET_RP2350)
-#define PICO_DEFAULT_WS2812_PIN 21
 #endif
 
 //--------------------------------------------------------------------+
