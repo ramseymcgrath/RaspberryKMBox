@@ -27,6 +27,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef RP2350
+#include "pico/float.h"
+#endif
+
 //--------------------------------------------------------------------+
 // TYPE DEFINITIONS
 //--------------------------------------------------------------------+
@@ -215,6 +219,10 @@ static bool is_time_elapsed(uint32_t start_time, uint32_t duration_ms)
 
 void led_blinking_task(void)
 {
+    // Note: This function is for additional LED blinking patterns
+    // The main heartbeat is now handled in the main loop
+    // This can be used for status-specific blinking patterns
+    
     led_lock_acquire();
     
     // Skip if blinking is disabled
@@ -231,14 +239,10 @@ void led_blinking_task(void)
         return;
     }
 
-    // Update timing and toggle LED
+    // Update timing
     g_led_controller.last_blink_time = current_time;
-    g_led_controller.led_state = !g_led_controller.led_state;
     
     led_lock_release();
-    
-    // GPIO operations don't need locking as they're atomic
-    gpio_put(PIN_LED, g_led_controller.led_state);
 }
 
 void led_set_blink_interval(uint32_t interval_ms)
@@ -276,16 +280,17 @@ void neopixel_init(void)
     led_lock_release();
 
     // Initialize LED pin (GPIO operations are atomic)
-    gpio_init(PIN_LED);
-    gpio_set_dir(PIN_LED, GPIO_OUT);
-    gpio_put(PIN_LED, 0);
-
-    // Initialize neopixel power pin but keep it OFF during early boot
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    gpio_put(PICO_DEFAULT_LED_PIN, 0);
+    
+    // Initialize NeoPixel power pin but keep it OFF
     gpio_init(NEOPIXEL_POWER);
     gpio_set_dir(NEOPIXEL_POWER, GPIO_OUT);
     gpio_put(NEOPIXEL_POWER, 0);  // Keep power OFF initially
 
-    printf("Neopixel pins initialized (power OFF for cold boot stability)\n");
+    // Note: NeoPixel power pin is now initialized in main() for better control
+    printf("Neopixel control initialized (power OFF)\n");
 }
 
 void neopixel_enable_power(void)
@@ -298,16 +303,14 @@ void neopixel_enable_power(void)
         return;
     }
 
-    printf("Enabling neopixel power...\n");
+    printf("Enabling NeoPixel power and initializing PIO...\n");
     
-    led_lock_release();
-    
-    // Enable neopixel power (GPIO operation is atomic)
+    // Enable NeoPixel power
     gpio_put(NEOPIXEL_POWER, 1);
-
-    // Allow power to stabilize
-    sleep_ms(POWER_STABILIZATION_DELAY_MS);
-
+    
+    // Small delay for power stabilization
+    led_lock_release();
+    sleep_ms(10);
     led_lock_acquire();
 
     // Load WS2812 program into PIO
@@ -335,7 +338,7 @@ void neopixel_enable_power(void)
     // Set initial color
     neopixel_set_color(COLOR_BOOTING);
 
-    printf("Neopixel fully initialized and powered on pin %d\n", PIN_NEOPIXEL);
+    printf("Neopixel PIO initialized on pin %d with power enabled\n", PIN_NEOPIXEL);
 }
 
 uint32_t neopixel_rgb_to_grb(uint32_t rgb)
@@ -440,9 +443,13 @@ static void update_breathing_brightness(void)
 
     // Apply sine wave for smoother breathing effect
     g_led_controller.current_brightness = BREATHING_MIN_BRIGHTNESS + 
-        (BREATHING_MAX_BRIGHTNESS - BREATHING_MIN_BRIGHTNESS) * 
-        sinf(progress * (float)M_PI / 2.0f);
-        
+        (BREATHING_MAX_BRIGHTNESS - BREATHING_MIN_BRIGHTNESS) *
+        #ifdef RP2350
+        sinf(progress * (float)PI / 2.0f); // RP2350 has a pi constant defined
+        #else
+        sinf(progress * 3.14159f / 2.0f);  // Use full PI for non-RP2350
+        #endif
+
     led_lock_release();
 }
 

@@ -3,6 +3,7 @@
  * 
  * This header defines structures and functions for utilizing RP2350-specific
  * hardware acceleration features for improved USB HID processing performance.
+ * Supports both PIO USB and MAX3421E host controllers.
  */
 
 #ifndef RP2350_HW_ACCEL_H
@@ -26,6 +27,7 @@ typedef struct {
     bool pio_enabled;               // PIO acceleration enabled
     bool fifo_enabled;              // Hardware FIFO enabled
     bool interpolator_enabled;      // Hardware interpolator enabled
+    bool max3421e_mode;             // True if using MAX3421E, false for PIO USB
 } hw_accel_config_t;
 
 // Hardware acceleration statistics
@@ -64,6 +66,11 @@ void hw_accel_get_keyboard_buffer(uint8_t** buffer);
 
 // Enhanced TinyUSB host task with hardware acceleration
 bool hw_accel_tuh_task(void);
+
+// Host controller specific acceleration
+bool hw_accel_configure_for_host(bool use_max3421e);
+bool hw_accel_optimize_spi_dma(void);  // For MAX3421E SPI transfers
+bool hw_accel_optimize_pio_dma(void);  // For PIO USB transfers
 
 #endif // RP2350
 

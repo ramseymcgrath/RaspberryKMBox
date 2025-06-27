@@ -23,4 +23,6 @@
 #include "usb_hid_callbacks.h"
 #include "usb_hid_stats.h"
 
+// MAX3421E functions are provided by TinyUSB, no separate header needed
+
 #endif // USB_HID_H

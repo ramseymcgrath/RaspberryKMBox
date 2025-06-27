@@ -48,7 +48,7 @@ bool dma_manager_request_channel(uint channel, const char* owner) {
     
     // Check if the channel is in the appropriate range for this core
     bool is_valid_for_core = false;
-    if (core_num == 0 && channel >= DMA_CORE0_CHANNEL_START && channel <= DMA_CORE0_CHANNEL_END) {
+    if (core_num == 0 && channel <= DMA_CORE0_CHANNEL_END) {
         is_valid_for_core = true;
     } else if (core_num == 1 && channel >= DMA_CORE1_CHANNEL_START && channel <= DMA_CORE1_CHANNEL_END) {
         is_valid_for_core = true;

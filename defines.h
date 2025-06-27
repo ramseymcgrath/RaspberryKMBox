@@ -12,27 +12,44 @@
 // HARDWARE CONFIGURATION
 //--------------------------------------------------------------------+
 
-// Pin definitions
+// Pin definitions - Use Pico SDK defaults where available
 #ifndef PIN_USB_HOST_DP
 #define PIN_USB_HOST_DP         (16u)   // PIO USB Host D+ pin
 #endif
 #ifndef PIN_USB_HOST_DM
 #define PIN_USB_HOST_DM         (17u)   // PIO USB Host D- pin
 #endif
+
+// Use SDK default for button if available, otherwise define our own
 #ifndef PIN_BUTTON
+#ifdef PICO_DEFAULT_BUTTON_PIN
+#define PIN_BUTTON              PICO_DEFAULT_BUTTON_PIN
+#else
 #define PIN_BUTTON              (7u)    // Reset button pin
 #endif
+#endif
+
 #ifndef PIN_USB_5V
 #define PIN_USB_5V              (18u)   // Power pin for USB host
 #endif
-#ifndef PIN_LED
-#define PIN_LED                 (13u)   // Status LED pin
-#endif
+
+
+// Use SDK default for NeoPixel/WS2812
 #ifndef PIN_NEOPIXEL
+#ifdef PICO_DEFAULT_WS2812_PIN
+#define PIN_NEOPIXEL            PICO_DEFAULT_WS2812_PIN
+#else
 #define PIN_NEOPIXEL            (21u)   // Neopixel data pin
 #endif
+#endif
+
+// NeoPixel power pin (board-specific, no SDK default)
 #ifndef NEOPIXEL_POWER
+#ifdef PICO_DEFAULT_WS2812_POWER_PIN
+#define NEOPIXEL_POWER          PICO_DEFAULT_WS2812_POWER_PIN
+#else
 #define NEOPIXEL_POWER          (20u)   // Neopixel power pin
+#endif
 #endif
 
 // USB port configuration
@@ -52,10 +69,14 @@
 //--------------------------------------------------------------------+
 
 // On some samples, the xosc can take longer to stabilize than is usual
+#ifndef PICO_XOSC_STARTUP_DELAY_MULTIPLIER
 #define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64
+#endif
 
 // Use slower generic flash access for RP2040
+#ifndef PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H
 #define PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H 1
+#endif
 
 // Flash SPI clock divider (RP2040=4, RP2350=2)
 #ifndef PICO_FLASH_SPI_CLKDIV
@@ -81,10 +102,7 @@
 #endif
 #endif
 
-// Default WS2812 pin for RP2350
-#if defined(TARGET_RP2350)
-#define PICO_DEFAULT_WS2812_PIN 21
-#endif
+// Note: PICO_DEFAULT_WS2812_PIN is now handled in the pin definitions section above
 
 //--------------------------------------------------------------------+
 // TIMING CONSTANTS
@@ -99,6 +117,13 @@
 #define FINAL_STABILIZATION_DELAY_MS    3000    // Pre-power-enable delay
 #define POWER_ENABLE_DELAY_MS           1000    // Delay between power enables
 #define DEVICE_READY_TIMEOUT_MS         3000    // USB device ready timeout
+
+// MAX3421E specific timing
+#define MAX3421E_COLD_BOOT_DELAY_MS     3000    // Extra delay for MAX3421E cold boot
+#define MAX3421E_INIT_RETRY_DELAY_MS    2000    // Delay between MAX3421E init retries
+#define MAX3421E_VBUS_STABILIZATION_MS  500     // Time for VBUS to stabilize after enable
+#define MAX3421E_SPI_INIT_DELAY_MS      10      // Delay after SPI initialization
+#define MAX3421E_REG_ACCESS_DELAY_US    1       // Microsecond delay for register access
 
 // Retry and recovery timing
 #define ERROR_RETRY_DELAY_MS            2000    // Delay between USB host initialization retry attempts
@@ -127,6 +152,7 @@
 #define LED_BLINK_SUSPENDED_MS          2500    // Slow blink when USB device suspended
 #define LED_BLINK_RESUMED_MS            250     // Fast blink when USB device resumed
 #define DEFAULT_BLINK_INTERVAL_MS       250     // Default LED blink interval
+#define LED_HEARTBEAT_INTERVAL_MS       500     // Heartbeat interval for onboard LED
 
 // Neopixel timing
 #define STATUS_UPDATE_INTERVAL_MS       100     // Neopixel status update interval
@@ -154,9 +180,44 @@
 #define WATCHDOG_ENABLE_INTER_CORE      1       // Enable inter-core monitoring
 #define WATCHDOG_ENABLE_DEBUG           0       // Disable debug output for cold boot
 
+
+
+//--------------------------------------------------------------------
+// SPI Configuration
+//--------------------------------------------------------------------
+// The Pico SDK provides PICO_DEFAULT_SPI and related pins based on the board
+// We only need to override if not already defined by the SDK
+
+#define SPI_BAUD_RATE          1000000 // SPI baud rate for MAX3421E (1 MHz)
+#define SPI_MAX_TRANSFER_SIZE  4096    // Maximum SPI transfer size for MAX3421
+
 //--------------------------------------------------------------------+
 // USB CONFIGURATION
 //--------------------------------------------------------------------+
+
+// USB device and host configuration
+// Note: Host controller selection is now managed in tusb_config.h
+// via CFG_TUH_MAX3421E and CFG_TUH_RPI_PIO_USB
+
+// USB Host Mode Options (for backward compatibility)
+#define USB_HOST_PIO      0
+
+// Only define USB_HOST_MODE if not already defined by CMake
+#ifndef USB_HOST_MODE
+  #if CFG_TUH_RPI_PIO_USB
+    #define USB_HOST_MODE USB_HOST_PIO
+    #define USE_MAX3421E 0
+    #define USE_PIO_USB 1
+  #elif CFG_TUH_MAX3421E
+    #define USB_HOST_MODE USB_HOST_MAX3421E
+    #define USE_MAX3421E 1
+    #define USE_PIO_USB 0
+  #else
+    #define USB_HOST_MODE USB_HOST_NONE
+    #define USE_MAX3421E 0
+    #define USE_PIO_USB 0
+  #endif
+#endif
 
 // USB descriptor constants
 #define USB_BCD_VERSION                 0x0200  // USB 2.0
@@ -291,6 +352,23 @@
 #define WS2812_RGB_SHIFT                8u
 
 //--------------------------------------------------------------------+
+// DMA CONFIGURATION
+//--------------------------------------------------------------------+
+
+// DMA channel assignments
+#define DMA_CHANNEL_KEYBOARD            0       // DMA channel for keyboard data
+#define DMA_CHANNEL_MOUSE               1       // DMA channel for mouse data
+#define DMA_CHANNEL_NEOPIXEL            2       // DMA channel for neopixel data
+#define DMA_CHANNEL_RESERVED_START      3       // Start of reserved channels
+
+// DMA buffer sizes (must be power of 2 for circular buffers)
+#define KBD_BUFFER_SIZE                 16      // Keyboard circular buffer size
+#define MOUSE_BUFFER_SIZE               32      // Mouse circular buffer size
+
+// DMA interrupt priority
+#define DMA_IRQ_PRIORITY                0xFF    // Highest priority for DMA interrupts
+
+//--------------------------------------------------------------------+
 // BUFFER AND ARRAY CONSTANTS
 //--------------------------------------------------------------------+
 
@@ -366,7 +444,7 @@
 //--------------------------------------------------------------------+
 
 #if BUILD_CONFIG == BUILD_CONFIG_PRODUCTION
-    #define ENABLE_VERBOSE_LOGGING      0
+    #define ENABLE_VERBOSE_LOGGING      1
     #define ENABLE_INIT_LOGGING         1
     #define ENABLE_ERROR_LOGGING        1
     #define ENABLE_STATS_LOGGING        1
@@ -374,7 +452,7 @@
     #define ENABLE_VERBOSE_LOGGING      1
     #define ENABLE_INIT_LOGGING         1
     #define ENABLE_ERROR_LOGGING        1
-    #define ENABLE_STATS_LOGGING        0
+    #define ENABLE_STATS_LOGGING        1
 #else // Development and Debug
     #define ENABLE_VERBOSE_LOGGING      1
     #define ENABLE_INIT_LOGGING         1

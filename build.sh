@@ -19,6 +19,7 @@ if ((BASH_VERSINFO[0] >= 4)); then
     [rp2040]="adafruit_feather_rp2040_usb_host"
     [rp2040_optimized]="adafruit_feather_rp2040_usb_host_optimized"
     [rp2350]="adafruit_feather_rp2350"
+    [rp2350_max3421e]="adafruit_feather_rp2350_max3421e"
   )
   
   # Function to get board name
@@ -33,6 +34,7 @@ else
       "rp2040") echo "adafruit_feather_rp2040_usb_host" ;;
       "rp2040_optimized") echo "adafruit_feather_rp2040_usb_host_optimized" ;;
       "rp2350") echo "adafruit_feather_rp2350" ;;
+      "rp2350_max3421e") echo "adafruit_feather_rp2350_max3421e" ;;
       *) echo "unknown" ;;
     esac
   }
@@ -88,9 +90,10 @@ usage() {
 ${BOLD}Usage:${NC} $0 [target] [options]
 
 ${BOLD}Targets:${NC}
-  rp2040        - Build for RP2040 (Raspberry Pi Pico)
-  rp2350        - Build for RP2350 (Raspberry Pi Pico 2)
-  both          - Build for both RP2040 and RP2350 (default)
+  rp2040           - Build for RP2040 (Raspberry Pi Pico) with PIO USB
+  rp2350           - Build for RP2350 (Raspberry Pi Pico 2) with PIO USB
+  rp2350_max3421e  - Build for RP2350 (Raspberry Pi Pico 2) with MAX3421E
+  both             - Build for both RP2040 and RP2350 with PIO USB (default)
 
 ${BOLD}Options:${NC}
   --clean       - Clean build directories before building
@@ -128,6 +131,8 @@ build_target() {
   # Use build directory names that match VS Code tasks
   if [[ "$chip" == "rp2040" ]]; then
     local build_dir="build-pico"
+  elif [[ "$chip" == "rp2350_max3421e" ]]; then
+    local build_dir="build-pico2-max3421e"
   else
     local build_dir="build-pico2"
   fi
@@ -183,6 +188,8 @@ flash_firmware() {
   # Use build directory names that match VS Code tasks
   if [[ "$chip" == "rp2040" ]]; then
     local build_dir="build-pico"
+  elif [[ "$chip" == "rp2350_max3421e" ]]; then
+    local build_dir="build-pico2-max3421e"
   else
     local build_dir="build-pico2"
   fi
@@ -224,6 +231,8 @@ print_manual_flash_instructions() {
   # Use build directory names that match VS Code tasks
   if [[ "$chip" == "rp2040" ]]; then
     local build_dir="build-pico"
+  elif [[ "$chip" == "rp2350_max3421e" ]]; then
+    local build_dir="build-pico2-max3421e"
   else
     local build_dir="build-pico2"
   fi
@@ -253,7 +262,7 @@ JOBS="$DEFAULT_JOBS"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    rp2040|rp2350|both)
+    rp2040|rp2350|rp2350_max3421e|both)
       TARGET="$1"
       ;;
     --clean)
@@ -278,7 +287,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate target
-if [[ "$TARGET" != "rp2040" && "$TARGET" != "rp2350" && "$TARGET" != "both" ]]; then
+if [[ "$TARGET" != "rp2040" && "$TARGET" != "rp2350" && "$TARGET" != "rp2350_max3421e" && "$TARGET" != "both" ]]; then
   print_error "Invalid target: $TARGET"
   usage
 fi
@@ -317,6 +326,17 @@ case "$TARGET" in
       fi
     fi
     ;;
+  "rp2350_max3421e")
+    TOTAL_COUNT=1
+    if build_target "rp2350_max3421e"; then
+      SUCCESS_COUNT=1
+      echo ""
+      read -rp "Would you like to flash the RP2350 with MAX3421E firmware? (y/n) " response
+      if [[ "$response" =~ ^[Yy]$ ]]; then
+        flash_firmware "rp2350_max3421e"
+      fi
+    fi
+    ;;
   "both")
     TOTAL_COUNT=2
     if build_target "rp2040"; then
@@ -336,7 +356,8 @@ case "$TARGET" in
       echo "Select which firmware to flash:"
       echo "  1) RP2040"
       echo "  2) RP2350"
-      echo "  3) Skip flashing"
+      echo "  3) RP2350 with MAX3421E"
+      echo "  4) Skip flashing"
       read -r choice
       
       case $choice in
@@ -347,11 +368,18 @@ case "$TARGET" in
             print_error "RP2040 build not available"
           fi
           ;;
-        3)
+        2)
           if file_exists "build-pico2/$OUTPUT_FILE"; then
             flash_firmware "rp2350"
           else
             print_error "RP2350 build not available"
+          fi
+          ;;
+        3)
+          if file_exists "build-pico2-max3421e/$OUTPUT_FILE"; then
+            flash_firmware "rp2350_max3421e"
+          else
+            print_error "RP2350 with MAX3421E build not available"
           fi
           ;;
         *)
@@ -383,6 +411,7 @@ if [[ $SUCCESS_COUNT -gt 0 ]]; then
   echo "2. Copy the appropriate .uf2 file to the RPI-RP2 drive:"
   file_exists "build-pico/$OUTPUT_FILE" && echo "   - For RP2040: build-pico/$OUTPUT_FILE"
   file_exists "build-pico2/$OUTPUT_FILE" && echo "   - For RP2350: build-pico2/$OUTPUT_FILE"
+  file_exists "build-pico2-max3421e/$OUTPUT_FILE" && echo "   - For RP2350 with MAX3421E: build-pico2-max3421e/$OUTPUT_FILE"
   echo "3. The device will reboot and run the firmware"
   
   echo ""

@@ -10,6 +10,8 @@
  extern "C" {
 #endif
 
+#include "defines.h"
+
 //--------------------------------------------------------------------
 // COMMON CONFIGURATION
 //--------------------------------------------------------------------
@@ -19,13 +21,28 @@
 // CRITICAL: Enable device stack on native USB controller (port 0) ONLY
 #define CFG_TUD_ENABLED           1
 
-// CRITICAL: Enable host stack with pio-usb on separate controller (port 1) ONLY
+// CRITICAL: Enable host stack with conditional controller selection
 #define CFG_TUH_ENABLED           1
-#define CFG_TUH_RPI_PIO_USB       1
+
+// Define host controller based on USE_MAX3421E
+#if USE_MAX3421E
+    // Use MAX3421E for host mode
+    #define CFG_TUH_MAX3421E          1
+    #define CFG_TUH_RPI_PIO_USB       0
+#else
+    #define CFG_TUH_MAX3421E          0
+    #define CFG_TUH_RPI_PIO_USB       1
+#endif
 
 // CRITICAL: Enable dual mode support with strict separation
 #define CFG_TUSB_RHPORT0_MODE     OPT_MODE_DEVICE
-#define CFG_TUSB_RHPORT1_MODE     OPT_MODE_HOST
+
+#if USE_MAX3421E
+    // MAX3421E uses different port configuration
+    #define CFG_TUSB_RHPORT1_MODE     OPT_MODE_HOST
+#else
+    #define CFG_TUSB_RHPORT1_MODE     OPT_MODE_HOST
+#endif
 
 // IMPROVED: Enable debugging for descriptor issues
 #ifndef CFG_TUSB_DEBUG
@@ -138,6 +155,23 @@
     #define CFG_TUH_LOG_LEVEL     0    // Disable host logging even in debug mode
     
     #define CFG_TUSB_DEBUG_PRINTF printf
+#endif
+
+//--------------------------------------------------------------------
+// MAX3421E SPECIFIC CONFIGURATION (when enabled)
+//--------------------------------------------------------------------
+
+#if USE_MAX3421E
+    // Define the maximum number of devices supported by MAX3421E
+    #define CFG_TUH_MAX3421E_DEVICE_MAX 4
+
+    // Enable specific features for MAX3421E
+    #define CFG_TUH_MAX3421E_HUB   1
+    #define CFG_TUH_MAX3421E_HID   4
+
+    // Increase buffer sizes for MAX3421E
+    #define CFG_TUH_MAX3421E_EPIN_BUFSIZE 128
+    #define CFG_TUH_MAX3421E_EPOUT_BUFSIZE 128
 #endif
 
 #ifdef __cplusplus

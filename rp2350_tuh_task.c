@@ -38,18 +38,23 @@ static bool hw_accel_enabled = false;
  * This function enhances the standard tuh_task() function with RP2350-specific
  * hardware acceleration features.
  */
+/**
+ * @brief Enhanced TinyUSB host task with hardware acceleration
+ *
+ * This function enhances the standard tuh_task() function with RP2350-specific
+ * hardware acceleration features. It first processes any hardware-accelerated
+ * operations, then falls back to the standard TinyUSB host task.
+ */
 void rp2350_enhanced_tuh_task(void) {
-    // Process hardware-accelerated operations first if enabled
     if (hw_accel_enabled) {
+        // Use hardware acceleration if enabled
         hw_accel_tuh_task();
+    } else if (original_tuh_task != NULL) {
+        // Call the original tuh_task function if we have a pointer to it
+        original_tuh_task();
     } else {
-        // Call the original tuh_task function
-        if (original_tuh_task != NULL) {
-            original_tuh_task();
-        } else {
-            // Fallback to direct call if original function pointer not set
-            tuh_task();
-        }
+        // Direct call as a last resort
+        tuh_task();
     }
 }
 
@@ -60,6 +65,15 @@ void rp2350_enhanced_tuh_task(void) {
  * storing a pointer to the original tuh_task function and enabling
  * hardware acceleration if available.
  * 
+ * @return true if initialization was successful, false otherwise
+ */
+/**
+ * @brief Initialize the enhanced tuh_task implementation
+ *
+ * This function initializes the enhanced tuh_task implementation by
+ * storing a pointer to the original tuh_task function and enabling
+ * hardware acceleration if available.
+ *
  * @return true if initialization was successful, false otherwise
  */
 bool rp2350_tuh_task_init(void) {
@@ -74,8 +88,8 @@ bool rp2350_tuh_task_init(void) {
     // Mark tuh_task as patched
     tuh_task_patched = true;
     
-    printf("RP2350 enhanced tuh_task initialization %s\n", 
-           tuh_task_patched ? "successful" : "failed");
+    const char* accel_status = hw_accel_enabled ? "with hardware acceleration" : "without hardware acceleration";
+    printf("RP2350 enhanced tuh_task initialized %s\n", accel_status);
     
     return tuh_task_patched;
 }
@@ -113,17 +127,27 @@ void rp2350_tuh_task_get_stats(hw_accel_stats_t* stats) {
  *
  * @return true if patching was successful, false otherwise
  */
+/**
+ * @brief Patch the tuh_task function at runtime
+ *
+ * This function sets up a hook to intercept calls to tuh_task and
+ * redirect them to our enhanced implementation.
+ *
+ * @return true if patching was successful, false otherwise
+ */
 bool rp2350_patch_tuh_task(void) {
-    // Get the address of the original tuh_task function
-    original_tuh_task = tuh_task;
+    // Store the original function pointer if not already done
+    if (original_tuh_task == NULL) {
+        original_tuh_task = tuh_task;
+    }
     
-    // Set up our hook
-    // Note: In a real implementation, we would use a more sophisticated
-    // approach to hook the function, such as function patching or
-    // linker tricks. For this example, we'll rely on the core1_task_loop
-    // to call our enhanced version directly.
+    // In a real implementation, we would use function patching or linker tricks
+    // to replace the actual function. For this implementation, we rely on
+    // core1_task_loop to call our enhanced version directly.
     
-    printf("RP2350: tuh_task patched for hardware acceleration\n");
+    const char* accel_status = hw_accel_enabled ? "with" : "without";
+    printf("RP2350: tuh_task patched %s hardware acceleration\n", accel_status);
+    
     tuh_task_patched = true;
     return true;
 }

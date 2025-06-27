@@ -12,11 +12,12 @@
 #include "hardware/gpio.h"
 #include "hardware/uart.h"
 #include "pico/unique_id.h"
-
-#ifdef RP2350
+#include "pico/multicore.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "hardware/pio.h"
+#include "hardware/clocks.h"
+#ifdef RP2350
 #include "rp2350_hw_accel.h"
 #include "rp2350_dma_handler.h"
 #endif
@@ -35,10 +36,8 @@
 
 #if PIO_USB_AVAILABLE
 #include "pio_usb.h"
-#include "hardware/clocks.h"
-#include "pico/multicore.h"
-#include "tusb.h"
 #endif
+
 
 //--------------------------------------------------------------------+
 // Type Definitions and Structures
@@ -51,6 +50,8 @@ typedef struct {
     bool button_pressed_last;
     bool usb_reset_cooldown;
     uint32_t usb_reset_cooldown_start;
+    uint32_t last_heartbeat_time;
+    bool heartbeat_state;
 } main_loop_state_t;
 
 #ifdef RP2350
@@ -74,17 +75,26 @@ static const uint32_t WATCHDOG_STATUS_INTERVAL_MS = WATCHDOG_STATUS_REPORT_INTER
 // Function Prototypes
 //--------------------------------------------------------------------+
 
-#if PIO_USB_AVAILABLE
+// Core functions
 static void core1_main(void);
 static void core1_task_loop(void);
-#ifdef RP2350
-static bool init_hid_hardware_acceleration(void);
-#endif
-#endif
-
 static bool initialize_system(void);
 static bool initialize_usb_device(void);
 static void main_application_loop(void);
+
+// USB controller initialization functions
+#if CFG_TUH_ENABLED && CFG_TUH_MAX3421E
+static bool initialize_max3421e_controller(void);
+#endif
+#if CFG_TUH_ENABLED && CFG_TUH_RPI_PIO_USB
+static bool initialize_pio_usb_controller(void);
+#endif
+
+// Hardware acceleration functions
+#ifdef RP2350
+static bool init_hid_hardware_acceleration(void);
+static bool initialize_rp2350_acceleration(void);
+#endif
 
 // Button handling functions
 static button_state_t get_button_state(uint32_t current_time);
@@ -100,12 +110,16 @@ static void report_watchdog_status(uint32_t current_time, uint32_t* watchdog_sta
 // Utility functions
 static inline bool is_time_elapsed(uint32_t current_time, uint32_t last_time, uint32_t interval);
 
+#if CFG_TUH_MAX3421E
+// API to read/write MAX3421's register. Implemented by TinyUSB
+extern uint8_t tuh_max3421_reg_read(uint8_t rhport, uint8_t reg, bool in_isr);
+extern bool tuh_max3421_reg_write(uint8_t rhport, uint8_t reg, uint8_t data, bool in_isr);
+#endif
+
+
 //--------------------------------------------------------------------+
 // Core1 Main (USB Host Task)
 //--------------------------------------------------------------------+
-
-#if PIO_USB_AVAILABLE
-// Separate initialization concerns into focused functions
 
 typedef enum {
     INIT_SUCCESS,
@@ -126,56 +140,49 @@ typedef struct {
 } core1_state_t;
 
 
+/**
+ * @brief Core1 main function - handles USB host initialization and task loop
+ */
 static void core1_main(void) {
     // EXTENDED delay for cold boot - core1 needs more time
-    sleep_ms(100);  // Increase from 10ms
+    LOG_INIT("Core1: Starting with extended stabilization delay...");
+    
+#if CFG_TUH_MAX3421E
+    // MAX3421E needs extra stabilization time
+    LOG_INIT("Core1: MAX3421E detected, adding 3 second stabilization delay...");
+    for (int i = 0; i < 30; i++) {
+        sleep_ms(100);
+        // Send periodic heartbeat during delay
+        if (i % 10 == 0) {
+            watchdog_core1_heartbeat();
+        }
+    }
+#else
+    sleep_ms(500);  // Standard delay for PIO USB
+#endif
     
     LOG_INIT("Core1: Starting USB host initialization (cold boot)...");
     
     // Add heartbeat early to prevent watchdog timeout during init
     watchdog_core1_heartbeat();
     
-    // CRITICAL: Configure PIO USB BEFORE tuh_init()
-    pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
-    pio_cfg.pin_dp = PIN_USB_HOST_DP;
-    pio_cfg.pinout = PIO_USB_PINOUT_DPDM;
-    
-    // Configure host stack with PIO USB configuration
-    if (!tuh_configure(USB_HOST_PORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg)) {
-        LOG_ERROR("Core1: CRITICAL - PIO USB configure failed");
-        // Don't return - continue with limited functionality
+    // Initialize the appropriate USB host controller
+#if CFG_TUH_ENABLED && CFG_TUH_MAX3421E
+    if (!initialize_max3421e_controller()) {
+        LOG_ERROR("Core1: CRITICAL - MAX3421E initialization failed");
+        LOG_ERROR("Core1: Will continue attempting to initialize in background");
+        // Continue with limited functionality - we'll retry in the task loop
     }
-    
-    // Initialize host stack on core1
-    if (!tuh_init(USB_HOST_PORT)) {
-        LOG_ERROR("Core1: CRITICAL - USB host init failed");
-        // Don't return - continue with limited functionality
+#elif CFG_TUH_ENABLED && CFG_TUH_RPI_PIO_USB
+    if (!initialize_pio_usb_controller()) {
+        LOG_ERROR("Core1: CRITICAL - PIO USB initialization failed");
+        // Continue with limited functionality
     }
+#endif
     
 #ifdef RP2350
-    // RP2350: Initialize hardware acceleration
-    hw_accel_enabled = init_hid_hardware_acceleration();
-    if (hw_accel_enabled) {
-        printf("Core1: RP2350 hardware acceleration initialized successfully\n");
-        
-        // Initialize enhanced tuh_task implementation
-        extern bool rp2350_tuh_task_init(void);
-        extern bool rp2350_patch_tuh_task(void);
-        
-        // First initialize the enhanced implementation
-        if (rp2350_tuh_task_init()) {
-            printf("Core1: Enhanced tuh_task implementation initialized successfully\n");
-            
-            // Then patch the tuh_task function to use our enhanced implementation
-            if (rp2350_patch_tuh_task()) {
-                printf("Core1: tuh_task patched successfully\n");
-            } else {
-                printf("Core1: Failed to patch tuh_task, using direct calls\n");
-            }
-        } else {
-            printf("Core1: Enhanced tuh_task implementation initialization failed\n");
-        }
-    } else {
+    // Initialize RP2350 hardware acceleration
+    if (!initialize_rp2350_acceleration()) {
         LOG_ERROR("Core1: RP2350 hardware acceleration initialization failed, using standard mode");
     }
 #endif
@@ -189,47 +196,271 @@ static void core1_main(void) {
     core1_task_loop();
 }
 
+/**
+ * @brief Initialize MAX3421E USB host controller
+ *
+ * @return true if initialization was successful, false otherwise
+ */
+#if CFG_TUH_ENABLED && CFG_TUH_MAX3421E
+
+// MAX3421E register definitions for debugging
+enum {
+    REVISION_ADDR = 18u << 3,     /* 0x90 - Revision register */
+    IOPINS1_ADDR = 20u << 3,      /* 0xA0 - GPIO control register */
+    IOPINS2_ADDR = 21u << 3,      /* 0xA8 - GPIO direction register */
+    HIRQ_ADDR = 25u << 3,         /* 0xC8 - Host interrupt request register */
+    HIEN_ADDR = 26u << 3,         /* 0xD0 - Host interrupt enable register */
+    MODE_ADDR = 27u << 3,         /* 0xD8 - Mode register */
+    HCTL_ADDR = 29u << 3,         /* 0xE8 - Host control register */
+    HRSL_ADDR = 31u << 3,         /* 0xF8 - Host result register */
+};
+
+static void print_max3421e_registers(void) {
+    LOG_INIT("=== MAX3421E Register Dump ===");
+    
+    uint8_t revision = tuh_max3421_reg_read(BOARD_TUH_RHPORT, REVISION_ADDR, false);
+    LOG_INIT("REVISION: 0x%02X (expected 0x12 or 0x13)", revision);
+    
+    uint8_t iopins1 = tuh_max3421_reg_read(BOARD_TUH_RHPORT, IOPINS1_ADDR, false);
+    LOG_INIT("IOPINS1 (GPIO): 0x%02X", iopins1);
+    
+    uint8_t iopins2 = tuh_max3421_reg_read(BOARD_TUH_RHPORT, IOPINS2_ADDR, false);
+    LOG_INIT("IOPINS2 (GPIO DIR): 0x%02X", iopins2);
+    
+    uint8_t hirq = tuh_max3421_reg_read(BOARD_TUH_RHPORT, HIRQ_ADDR, false);
+    LOG_INIT("HIRQ: 0x%02X", hirq);
+    
+    uint8_t hien = tuh_max3421_reg_read(BOARD_TUH_RHPORT, HIEN_ADDR, false);
+    LOG_INIT("HIEN: 0x%02X", hien);
+    
+    uint8_t mode = tuh_max3421_reg_read(BOARD_TUH_RHPORT, MODE_ADDR, false);
+    LOG_INIT("MODE: 0x%02X", mode);
+    
+    uint8_t hctl = tuh_max3421_reg_read(BOARD_TUH_RHPORT, HCTL_ADDR, false);
+    LOG_INIT("HCTL: 0x%02X", hctl);
+    
+    uint8_t hrsl = tuh_max3421_reg_read(BOARD_TUH_RHPORT, HRSL_ADDR, false);
+    LOG_INIT("HRSL: 0x%02X", hrsl);
+    
+    LOG_INIT("==============================");
+}
+
+static bool initialize_max3421e_controller(void) {
+    const int MAX_INIT_ATTEMPTS = 3;
+    bool init_success = false;
+    
+    LOG_INIT("Core1: Initializing MAX3421E USB host controller...");
+    
+    for (int attempt = 1; attempt <= MAX_INIT_ATTEMPTS; attempt++) {
+        LOG_INIT("Core1: MAX3421E initialization attempt %d/%d", attempt, MAX_INIT_ATTEMPTS);
+        
+        // Add delay before each attempt
+        if (attempt > 1) {
+            LOG_INIT("Core1: Waiting 2 seconds before retry...");
+            sleep_ms(2000);
+        }
+        
+        // Initialize TinyUSB host stack
+        if (!tuh_init(BOARD_TUH_RHPORT)) {
+            LOG_ERROR("Core1: USB host init failed on attempt %d", attempt);
+            
+            // Print registers for debugging
+            LOG_ERROR("Core1: Dumping MAX3421E registers after failure:");
+            print_max3421e_registers();
+            
+            continue; // Try again
+        }
+        
+        LOG_INIT("Core1: USB host stack initialized successfully");
+        
+        // Add stabilization delay
+        sleep_ms(500);
+        
+        // Check if MAX3421E is responding correctly
+        uint8_t revision = tuh_max3421_reg_read(BOARD_TUH_RHPORT, REVISION_ADDR, false);
+        if (revision != 0x12 && revision != 0x13) {
+            LOG_ERROR("Core1: Invalid MAX3421E revision: 0x%02X (expected 0x12 or 0x13)", revision);
+            print_max3421e_registers();
+            continue;
+        }
+        
+        LOG_INIT("Core1: MAX3421E revision verified: 0x%02X", revision);
+        
+        // Now enable VBUS via MAX3421E's GPIO0 (FeatherWing style)
+        // The MAX3421E uses its internal GPIO0 pin for VBUS control
+        
+        // Set GPIO0 as output (bit 0 = 1 for output)
+        tuh_max3421_reg_write(BOARD_TUH_RHPORT, IOPINS2_ADDR, 0x01, false);
+        sleep_ms(10); // Small delay after register write
+        
+        // Set GPIO0 high to enable VBUS (bit 0 = 1)
+        tuh_max3421_reg_write(BOARD_TUH_RHPORT, IOPINS1_ADDR, 0x01, false);
+        sleep_ms(100); // Allow VBUS to stabilize
+        
+        // Verify VBUS is enabled
+        uint8_t gpio_state = tuh_max3421_reg_read(BOARD_TUH_RHPORT, IOPINS1_ADDR, false);
+        if ((gpio_state & 0x01) == 0) {
+            LOG_ERROR("Core1: Failed to enable VBUS, GPIO0 state: 0x%02X", gpio_state);
+            print_max3421e_registers();
+            continue;
+        }
+        
+        LOG_INIT("Core1: MAX3421E VBUS enabled successfully via GPIO0");
+        
+        // Final register dump for successful init
+        LOG_INIT("Core1: MAX3421E initialized successfully, final register state:");
+        print_max3421e_registers();
+        
+        init_success = true;
+        break;
+    }
+    
+    if (!init_success) {
+        LOG_ERROR("Core1: CRITICAL - MAX3421E initialization failed after %d attempts", MAX_INIT_ATTEMPTS);
+        LOG_ERROR("Core1: System will continue with limited functionality");
+    }
+    
+    return init_success;
+}
+#endif
+
+/**
+ * @brief Initialize PIO USB host controller
+ *
+ * @return true if initialization was successful, false otherwise
+ */
+#if CFG_TUH_ENABLED && CFG_TUH_RPI_PIO_USB
+static bool initialize_pio_usb_controller(void) {
+    LOG_INIT("Core1: Initializing PIO USB host controller...");
+    
+    pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
+    pio_cfg.pin_dp = PIN_USB_HOST_DP;
+    pio_cfg.pinout = PIO_USB_PINOUT_DPDM;
+    
+    // Configure host stack with PIO USB configuration
+    if (!tuh_configure(USB_HOST_PORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg)) {
+        LOG_ERROR("Core1: CRITICAL - PIO USB configure failed");
+        return false;
+    }
+    
+    // Initialize host stack on core1
+    if (!tuh_init(USB_HOST_PORT)) {
+        LOG_ERROR("Core1: CRITICAL - USB host init failed");
+        return false;
+    }
+    
+    LOG_INIT("Core1: PIO USB host controller initialized successfully");
+    return true;
+}
+#endif
+
+/**
+ * @brief Initialize RP2350 hardware acceleration
+ *
+ * @return true if initialization was successful, false otherwise
+ */
+#ifdef RP2350
+static bool initialize_rp2350_acceleration(void) {
+    // Initialize hardware acceleration
+    hw_accel_enabled = init_hid_hardware_acceleration();
+    if (!hw_accel_enabled) {
+        return false;
+    }
+    
+    printf("Core1: RP2350 hardware acceleration initialized successfully\n");
+    
+    // Initialize enhanced tuh_task implementation
+    extern bool rp2350_tuh_task_init(void);
+    extern bool rp2350_patch_tuh_task(void);
+    
+    // First initialize the enhanced implementation
+    if (!rp2350_tuh_task_init()) {
+        printf("Core1: Enhanced tuh_task implementation initialization failed\n");
+        return false;
+    }
+    
+    printf("Core1: Enhanced tuh_task implementation initialized successfully\n");
+    
+    // Then patch the tuh_task function to use our enhanced implementation
+    if (!rp2350_patch_tuh_task()) {
+        printf("Core1: Failed to patch tuh_task, using direct calls\n");
+        return false;
+    }
+    
+    printf("Core1: tuh_task patched successfully\n");
+    return true;
+}
+#endif
+
+/**
+ * @brief Core1 task loop - handles USB host tasks and watchdog heartbeat
+ */
 static void core1_task_loop(void) {
     core1_state_t state = {0};  // Local state instead of static
+    
+#if CFG_TUH_MAX3421E
+    // Track if we need to retry MAX3421E initialization
+    static bool max3421e_initialized = false;
+    static uint32_t last_reinit_attempt = 0;
+    static int reinit_attempts = 0;
+    const uint32_t REINIT_INTERVAL_MS = 5000; // Try every 5 seconds
+    const int MAX_REINIT_ATTEMPTS = 10;
+    
+    // Check initial state
+    if (!usb_host_is_initialized()) {
+        LOG_ERROR("Core1: USB host not initialized, will retry in task loop");
+    } else {
+        max3421e_initialized = true;
+    }
+#endif
 
 #ifdef RP2350
-    // RP2350: Initialize hardware acceleration if not already initialized
+    // Retry hardware acceleration initialization if needed
     if (!hw_accel_enabled) {
-        hw_accel_enabled = init_hid_hardware_acceleration();
-        
-        // Initialize enhanced tuh_task implementation if hardware acceleration is enabled
-        if (hw_accel_enabled) {
-            extern bool rp2350_tuh_task_init(void);
-            extern bool rp2350_patch_tuh_task(void);
-            
-            // First initialize the enhanced implementation
-            if (rp2350_tuh_task_init()) {
-                // Then patch the tuh_task function
-                rp2350_patch_tuh_task();
-            }
-        }
+        initialize_rp2350_acceleration();
     }
 #endif
 
     while (true) {
+#if CFG_TUH_MAX3421E
+        // Check if we need to retry MAX3421E initialization
+        if (!max3421e_initialized && reinit_attempts < MAX_REINIT_ATTEMPTS) {
+            uint32_t current_time = to_ms_since_boot(get_absolute_time());
+            if (current_time - last_reinit_attempt >= REINIT_INTERVAL_MS) {
+                reinit_attempts++;
+                LOG_INIT("Core1: Retrying MAX3421E initialization (attempt %d/%d)...",
+                         reinit_attempts, MAX_REINIT_ATTEMPTS);
+                
+                if (initialize_max3421e_controller()) {
+                    max3421e_initialized = true;
+                    LOG_INIT("Core1: MAX3421E initialization successful on retry!");
+                    usb_host_mark_initialized();
+                } else {
+                    LOG_ERROR("Core1: MAX3421E initialization retry %d failed", reinit_attempts);
+                }
+                
+                last_reinit_attempt = current_time;
+            }
+        }
+#endif
+
+        // Run the appropriate USB host task implementation
 #ifdef RP2350
-        // RP2350: Use enhanced tuh_task implementation directly
         extern void rp2350_enhanced_tuh_task(void);
-        extern bool rp2350_tuh_task_hw_accel_enabled(void);
         
         if (hw_accel_enabled) {
-            // Call our enhanced implementation directly
+            // Use hardware-accelerated implementation
             rp2350_enhanced_tuh_task();
         } else {
             // Fall back to standard implementation
             tuh_task();
         }
 #else
-        // Original RP2040 implementation
+        // Standard RP2040 implementation
         tuh_task();
 #endif
         
-        // Check heartbeat timing less frequently
+        // Handle watchdog heartbeat at controlled intervals
         if (++state.heartbeat_counter >= CORE1_HEARTBEAT_CHECK_LOOPS) {
             const uint32_t current_time = to_ms_since_boot(get_absolute_time());
             if (system_state_should_run_task(NULL, current_time,
@@ -244,63 +475,6 @@ static void core1_task_loop(void) {
 }
 
 #ifdef RP2350
-
-// RP2350 Hardware Acceleration Register Definitions
-#define RP2350_HID_ACCEL_BASE       0x40100000  // Base address for acceleration hardware
-#define RP2350_ACCEL_CTRL           0           // Control register offset
-#define RP2350_ACCEL_STATUS         1           // Status register offset
-#define RP2350_ACCEL_CONFIG         2           // Configuration register offset
-#define RP2350_ACCEL_DATA           3           // Data register offset
-
-// Control register bits
-#define RP2350_ACCEL_ENABLE         (1 << 0)    // Enable acceleration
-#define RP2350_ACCEL_DMA_MODE       (1 << 1)    // Enable DMA mode
-#define RP2350_ACCEL_START_PROCESSING (1 << 2)  // Start processing
-
-// Status register bits
-#define RP2350_ACCEL_BUSY           (1 << 0)    // Processing in progress
-#define RP2350_ACCEL_ERROR          (1 << 1)    // Error occurred
-#define RP2350_ACCEL_COMPLETE       (1 << 2)    // Processing complete
-
-// Acceleration modes
-#define RP2350_ACCEL_MODE_HID_OPTIMIZED 0x01    // Optimized for HID processing
-
-/**
- * @brief Get the current time in microseconds (32-bit)
- *
- * This is a wrapper around time_us_64() that returns a 32-bit value,
- * which is sufficient for most timing operations.
- *
- * @return uint32_t Current time in microseconds
- */
-// Function already defined in pico SDK, so we'll use that instead
-// static inline uint32_t time_us_32(void) {
-//     // Use the 64-bit timer and truncate to 32 bits
-//     return (uint32_t)time_us_64();
-// }
-
-typedef struct {
-    bool initialized;
-    uint32_t acceleration_mode;
-    void* hw_context;
-    uint32_t performance_counters[4];
-} rp2350_accel_context_t;
-
-static rp2350_accel_context_t accel_ctx = {0};
-
-/**
- * @brief Minimal version of tuh_task that only processes critical operations
- *
- * This function handles only the essential USB host tasks needed after
- * hardware acceleration has processed the bulk of the work.
- */
-static void tuh_task_minimal(void) {
-    // This is a simplified version that just calls the regular tuh_task
-    // In a real implementation, this would only handle essential operations
-    // that the hardware acceleration couldn't handle
-    tuh_task();
-}
-
 /**
  * @brief Initialize RP2350 hardware acceleration for USB HID processing
  *
@@ -326,7 +500,6 @@ static bool init_hid_hardware_acceleration(void) {
 }
 #endif // RP2350
 
-#endif // PIO_USB_AVAILABLE
 //--------------------------------------------------------------------+
 // System Initialization Functions
 //--------------------------------------------------------------------+
@@ -340,7 +513,20 @@ static bool initialize_system(void) {
     sleep_ms(COLD_BOOT_STABILIZATION_MS);
     
     LOG_INIT("PICO PIO KMBox - Starting initialization...");
-    LOG_INIT("Neopixel pins initialized (power OFF for cold boot stability)");
+    LOG_INIT("Platform: %s",
+#ifdef RP2350
+        "RP2350"
+#else
+        "RP2040"
+#endif
+    );
+    LOG_INIT("USB Host Mode: %s",
+#if CFG_TUH_MAX3421E
+        "MAX3421E"
+#else
+        "PIO USB"
+#endif
+    );
     
 #if PIO_USB_AVAILABLE
     // Set system clock to 120MHz (required for PIO USB - must be multiple of 12MHz)
@@ -360,6 +546,11 @@ static bool initialize_system(void) {
     // Configure UART for non-blocking operation
     uart_set_fifo_enabled(uart0, true);  // Enable FIFO for better performance
     
+    // Initialize onboard LED for heartbeat
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    gpio_put(PICO_DEFAULT_LED_PIN, 0);  // Start with LED off
+
     // Initialize LED control module (neopixel power OFF for now)
     neopixel_init();
 
@@ -518,6 +709,11 @@ static inline bool is_time_elapsed(uint32_t current_time, uint32_t last_time, ui
 static void main_application_loop(void) {
     system_state_t* state = get_system_state();
     system_state_init(state);
+    
+    // Initialize main loop state for heartbeat
+    main_loop_state_t loop_state = {0};
+    loop_state.last_heartbeat_time = to_ms_since_boot(get_absolute_time());
+    loop_state.heartbeat_state = false;
 
     while (true) {
         // TinyUSB device task - highest priority
@@ -567,6 +763,13 @@ static void main_application_loop(void) {
         // Periodic reporting
         report_hid_statistics(current_time, &state->stats_timer);
         report_watchdog_status(current_time, &state->watchdog_status_timer);
+        
+        // Onboard LED heartbeat
+        if (is_time_elapsed(current_time, loop_state.last_heartbeat_time, LED_HEARTBEAT_INTERVAL_MS)) {
+            loop_state.heartbeat_state = !loop_state.heartbeat_state;
+            gpio_put(PICO_DEFAULT_LED_PIN, loop_state.heartbeat_state);
+            loop_state.last_heartbeat_time = current_time;
+        }
     }
 }
 
@@ -575,32 +778,69 @@ static void main_application_loop(void) {
 //--------------------------------------------------------------------+
 
 int main(void) {
+    // CRITICAL: Initialize LED FIRST for early heartbeat indication
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    gpio_put(PICO_DEFAULT_LED_PIN, 1);  // Turn on LED immediately for boot indication
+
+    // Start heartbeat LED pattern early (simple toggle every 250ms)
+    absolute_time_t last_led_toggle = get_absolute_time();
+    bool led_state = true;
+    
     // CRITICAL: Basic GPIO setup FIRST, before any delays
-#ifndef RP2350
-    // USB 5V power pin initialization only for RP2040 boards
+#if !defined(RP2350) && CFG_TUH_RPI_PIO_USB
+    // USB 5V power pin initialization only for RP2040 boards with PIO USB
     gpio_init(PIN_USB_5V);
     gpio_set_dir(PIN_USB_5V, GPIO_OUT);
     gpio_put(PIN_USB_5V, 0);  // Keep USB power OFF during entire boot
+#elif CFG_TUH_MAX3421E
+    // For MAX3421E, ensure we don't enable any power yet
+    // VBUS will be controlled via MAX3421E GPIO0 later
 #endif
     
-    gpio_init(PIN_LED);
-    gpio_set_dir(PIN_LED, GPIO_OUT);
-    gpio_put(PIN_LED, 1);  // Turn on LED early for status
+    // Initialize NeoPixel power pin early but keep it OFF
+    gpio_init(NEOPIXEL_POWER);
+    gpio_set_dir(NEOPIXEL_POWER, GPIO_OUT);
+    gpio_put(NEOPIXEL_POWER, 0);  // Keep NeoPixel power OFF initially
     
-    // EXTENDED cold boot stabilization - this is critical!
-    sleep_ms(COLD_BOOT_STABILIZATION_MS);  // Should be 2000ms or more
+    // EXTENDED cold boot stabilization with heartbeat
+    // This is critical for MAX3421E stability
+    uint32_t stabilization_time = COLD_BOOT_STABILIZATION_MS + 1000; // Add extra 1s for MAX3421E
+    uint32_t elapsed = 0;
+    while (elapsed < stabilization_time) {
+        // Toggle LED every 250ms for heartbeat
+        if (absolute_time_diff_us(last_led_toggle, get_absolute_time()) > 250000) {
+            led_state = !led_state;
+            gpio_put(PICO_DEFAULT_LED_PIN, led_state);
+            last_led_toggle = get_absolute_time();
+        }
+        sleep_ms(50);
+        elapsed += 50;
+    }
+    
+    // Initialize stdio early for debug output
+    stdio_init_all();
+    sleep_ms(100); // Let UART stabilize
+    
+    printf("\n\n=== PIOKMBox Cold Boot Sequence ===\n");
+    printf("LED heartbeat started\n");
     
 #ifdef RP2350
-    LOG_INIT("RP2350 detected - configuring for hardware acceleration");
+    printf("RP2350 detected - configuring for hardware acceleration\n");
 #else
-    LOG_INIT("RP2040 detected - using standard configuration");
+    printf("RP2040 detected - using standard configuration\n");
+#endif
+
+#if CFG_TUH_MAX3421E
+    printf("MAX3421E USB host controller selected\n");
+    printf("Extended stabilization enabled for MAX3421E\n");
 #endif
     
     // Set system clock with proper stabilization
-    LOG_INIT("Setting system clock...");  // Basic printf should work with default clock
+    printf("Setting system clock to 120MHz...\n");
     if (!set_sys_clock_khz(120000, true)) {
         // Clock setting failed - try to continue with default clock
-        LOG_ERROR("WARNING: Failed to set 120MHz clock, continuing with default");
+        printf("WARNING: Failed to set 120MHz clock, continuing with default\n");
     }
     
     // CRITICAL: Extended delay after clock change for cold boot
@@ -611,6 +851,8 @@ int main(void) {
     
     // Additional delay for UART stabilization after clock change
     sleep_ms(100);
+    
+    // Now we can use LOG macros safely
     
     LOG_INIT("=== PIOKMBox Starting (Cold Boot Enhanced) ===");
 #ifdef RP2350
@@ -627,6 +869,12 @@ int main(void) {
         LOG_ERROR("CRITICAL: System initialization failed");
         return -1;
     }
+    
+    // Enable NeoPixel power early for visual feedback
+    LOG_INIT("Enabling NeoPixel power for boot status indication...");
+    gpio_put(NEOPIXEL_POWER, 1);
+    sleep_ms(100);  // Allow power to stabilize
+    neopixel_enable_power();  // Initialize the PIO for NeoPixel
     
     // Additional hardware-specific delay for problematic hardware revisions
     #if REQUIRES_EXTENDED_BOOT_DELAY
@@ -647,9 +895,29 @@ int main(void) {
     // Let device stack fully initialize
     sleep_ms(500);
     
-    // NOW enable USB host power with extended stabilization
-    LOG_INIT("Enabling USB host power...");
+    // Extended stabilization before enabling USB host power
+    LOG_INIT("Extended stabilization before USB host power enable...");
+    
+#if CFG_TUH_ENABLED && CFG_TUH_MAX3421E
+    // For MAX3421E, add extra delay and don't enable power yet
+    LOG_INIT("MAX3421E: Adding extra stabilization time (3 seconds)...");
+    for (int i = 0; i < 30; i++) {
+        // Continue heartbeat during delay
+        if (i % 5 == 0) {
+            led_state = !led_state;
+            gpio_put(PICO_DEFAULT_LED_PIN, led_state);
+        }
+        sleep_ms(100);
+    }
+    LOG_INIT("MAX3421E: VBUS will be enabled during controller initialization");
+#elif !defined(RP2350) && CFG_TUH_RPI_PIO_USB
+    // For RP2040 PIO USB, we need to enable power via GPIO
+    LOG_INIT("RP2040 PIO USB: Enabling 5V power on GPIO %d", PIN_USB_5V);
     usb_host_enable_power();
+#else
+    // RP2350 with PIO USB doesn't need 5V control
+    LOG_INIT("RP2350 PIO USB: No 5V power control needed");
+#endif
     
 #ifdef RP2350
     // Initialize hardware acceleration components before core1 launch
@@ -673,9 +941,8 @@ int main(void) {
     watchdog_init();
     watchdog_start();
     
-    // Enable neopixel power last
-    sleep_ms(500);
-    neopixel_enable_power();
+    // NeoPixel is already enabled, just update status
+    LOG_INIT("Updating NeoPixel status...");
     
     LOG_INIT("=== PIOKMBox Ready (Cold Boot Complete) ===");
 #ifdef RP2350

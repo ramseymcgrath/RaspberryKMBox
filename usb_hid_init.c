@@ -15,6 +15,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#if CFG_TUH_ENABLED && CFG_TUH_MAX3421E
+// API to read/write MAX3421's register. Implemented by TinyUSB
+extern uint8_t tuh_max3421_reg_read(uint8_t rhport, uint8_t reg, bool in_isr);
+extern bool tuh_max3421_reg_write(uint8_t rhport, uint8_t reg, uint8_t data, bool in_isr);
+#endif
+
 // Function declarations
 static bool generate_serial_string(void);
 static bool init_gpio_pins(void);
@@ -125,14 +131,18 @@ void init_synchronization(void) {
 bool usb_host_enable_power(void)
 {
     LOG_INIT("Enabling USB host power...");
-#ifndef RP2350
-    // Only control the 5V power pin on RP2040 boards
+#if CFG_TUH_RPI_PIO_USB && !defined(RP2350)
+    // Only control the 5V power pin on RP2040 boards with PIO USB
     gpio_put(PIN_USB_5V, 1); // Enable USB power
     sleep_ms(100); // Allow power to stabilize
-    LOG_INIT("USB host power enabled on pin %d", PIN_USB_5V);
+    LOG_INIT("RP2040 PIO USB: USB host power enabled on GPIO %d", PIN_USB_5V);
+#elif CFG_TUH_MAX3421E
+    // For MAX3421E, VBUS control is handled during controller initialization
+    // The initialize_max3421e_controller() function in PIOKMbox.c handles this
+    LOG_INIT("MAX3421E: VBUS control will be handled during controller initialization");
 #else
-    // RP2350 uses plain USB, no need to control 5V pin
-    LOG_INIT("RP2350 detected - using plain USB (no 5V pin control needed)");
+    // RP2350 with PIO USB doesn't need 5V control
+    LOG_INIT("RP2350 PIO USB: No 5V power control needed (using plain USB)");
 #endif
     return true;
 }
@@ -175,16 +185,29 @@ bool usb_host_stack_reset(void)
     // Reset host stack state
     usb_host_initialized = false;
     
-    // Power cycle the USB host port
-#ifndef RP2350
-    // Only power cycle on RP2040 boards
+    // Power cycle the USB host port based on configuration
+#if CFG_TUH_RPI_PIO_USB && !defined(RP2350)
+    // Only power cycle on RP2040 boards with PIO USB
+    LOG_INIT("RP2040 PIO USB: Power cycling USB host...");
     gpio_put(PIN_USB_5V, 0);
     sleep_ms(500); // Wait for power to fully discharge
     gpio_put(PIN_USB_5V, 1);
     sleep_ms(500); // Wait for power to stabilize
+#elif CFG_TUH_MAX3421E
+    // For MAX3421E, toggle VBUS via GPIO0
+    LOG_INIT("MAX3421E: Toggling VBUS for reset...");
+    enum {
+        IOPINS1_ADDR = 20u << 3,  /* 0xA0 - GPIO control register */
+    };
+    // Disable VBUS
+    tuh_max3421_reg_write(BOARD_TUH_RHPORT, IOPINS1_ADDR, 0x00, false);
+    sleep_ms(500);
+    // Re-enable VBUS
+    tuh_max3421_reg_write(BOARD_TUH_RHPORT, IOPINS1_ADDR, 0x01, false);
+    sleep_ms(500);
 #else
-    // RP2350 uses plain USB, no need to power cycle
-    LOG_INIT("RP2350 detected - skipping 5V power cycle (using plain USB)");
+    // RP2350 with PIO USB doesn't need power cycling
+    LOG_INIT("RP2350 PIO USB: No power cycle needed (using plain USB)");
     sleep_ms(500); // Still wait for stability
 #endif
     
