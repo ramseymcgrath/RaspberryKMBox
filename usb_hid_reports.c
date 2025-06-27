@@ -10,6 +10,7 @@
 #ifdef RP2350
 #include "rp2350_hw_accel.h"
 #include "rp2350_dma_handler.h"
+#include "dma_manager.h"
 #endif
 
 // No external stats declarations needed
@@ -18,6 +19,28 @@
 static bool process_keyboard_report_internal(const hid_keyboard_report_t* report);
 static bool process_mouse_report_internal(const hid_mouse_report_t* report);
 static void dequeue_and_process_mouse_report(void);
+
+#ifdef RP2350
+// DMA channel handler wrapper for RP2350 unified DMA manager
+static void dma_channel_handler(uint channel) {
+    (void)channel; // The current dma_handler() doesn't use channel parameter
+    dma_handler(); // Call the existing parameterless function
+}
+#else
+// DMA interrupt wrapper functions for non-RP2350 platforms
+extern void dma_kbd_irq_handler(void);
+extern void dma_mouse_irq_handler(void);
+
+static void kbd_irq_wrapper(uint channel) {
+    (void)channel; // Unused parameter
+    dma_kbd_irq_handler();
+}
+
+static void mouse_irq_wrapper(uint channel) {
+    (void)channel; // Unused parameter
+    dma_mouse_irq_handler();
+}
+#endif
 
 #ifdef RP2350
 // RP2350 hardware-accelerated implementations
@@ -113,32 +136,27 @@ void init_hid_dma(void) {
         false                             // Don't start immediately
     );
 
-    // Set up DMA interrupts
+    // Set up DMA interrupts through the unified DMA manager
     dma_channel_set_irq0_enabled(kbd_dma_channel, true);
     dma_channel_set_irq0_enabled(mouse_dma_channel, true);
     
+    
 #ifdef RP2350
-    // Set up DMA interrupt handlers from rp2350_dma_handler.c
-    irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
-    irq_set_priority(DMA_IRQ_0, DMA_IRQ_PRIORITY);
-    irq_set_enabled(DMA_IRQ_0, true);
+    // Register DMA interrupt handlers through the unified manager
+    dma_manager_register_irq_handler(kbd_dma_channel, dma_channel_handler);
+    dma_manager_register_irq_handler(mouse_dma_channel, dma_channel_handler);
     
-    irq_set_exclusive_handler(DMA_IRQ_1, dma_handler);
-    irq_set_priority(DMA_IRQ_1, DMA_IRQ_PRIORITY);
-    irq_set_enabled(DMA_IRQ_1, true);
+    // Enable channel interrupts through the manager
+    dma_manager_enable_channel_irq(kbd_dma_channel, 0);  // Use DMA_IRQ_0
+    dma_manager_enable_channel_irq(mouse_dma_channel, 0); // Use DMA_IRQ_0
 #else
-    // Define generic DMA handlers for non-RP2350 platforms
-    // These would need to be implemented elsewhere
-    extern void dma_kbd_irq_handler(void);
-    extern void dma_mouse_irq_handler(void);
+    // Register handlers through the unified manager
+    dma_manager_register_irq_handler(kbd_dma_channel, kbd_irq_wrapper);
+    dma_manager_register_irq_handler(mouse_dma_channel, mouse_irq_wrapper);
     
-    irq_set_exclusive_handler(DMA_IRQ_0, dma_kbd_irq_handler);
-    irq_set_priority(DMA_IRQ_0, DMA_IRQ_PRIORITY);
-    irq_set_enabled(DMA_IRQ_0, true);
-    
-    irq_set_exclusive_handler(DMA_IRQ_1, dma_mouse_irq_handler);
-    irq_set_priority(DMA_IRQ_1, DMA_IRQ_PRIORITY);
-    irq_set_enabled(DMA_IRQ_1, true);
+    // Enable channel interrupts through the manager
+    dma_manager_enable_channel_irq(kbd_dma_channel, 0);   // Use DMA_IRQ_0
+    dma_manager_enable_channel_irq(mouse_dma_channel, 1); // Use DMA_IRQ_1
 #endif
     
     LOG_INIT("DMA HID report processing initialized");

@@ -16,6 +16,7 @@
 #include <string.h>
 #include "defines.h"
 #include "usb_hid_types.h"
+#include "dma_manager.h"
 
 #ifdef RP2350
 
@@ -55,7 +56,7 @@ static uint8_t mouse_fifo_data[16 * sizeof(hid_mouse_report_t)];
 static uint8_t keyboard_fifo_data[16 * sizeof(hid_keyboard_report_t)];
 
 // Forward declarations for internal functions
-static void hw_accel_dma_handler(void);
+static void hw_accel_dma_handler(uint channel);
 static bool hw_accel_setup_dma(void);
 static bool hw_accel_setup_pio(void);
 static bool hw_accel_setup_fifo(void);
@@ -435,13 +436,13 @@ bool hw_accel_tuh_task(void) {
  * @brief DMA interrupt handler
  * 
  * This function handles DMA completion interrupts for HID data transfers.
+ * 
+ * @param channel The DMA channel that triggered the interrupt
  */
-static void hw_accel_dma_handler(void) {
-    // Check which DMA channel triggered the interrupt
-    if (dma_channel_get_irq0_status(hw_accel_config.dma_channel_mouse)) {
+static void hw_accel_dma_handler(uint channel) {
+    // Process based on which channel triggered the interrupt
+    if (channel == hw_accel_config.dma_channel_mouse) {
         // Mouse DMA transfer complete
-        dma_channel_acknowledge_irq0(hw_accel_config.dma_channel_mouse);
-        
         // Process the mouse data that was transferred via DMA
         hid_mouse_report_t* report = (hid_mouse_report_t*)mouse_dma_buffer;
         bool success = tud_hid_mouse_report(REPORT_ID_MOUSE, report->buttons, report->x, report->y, report->wheel, 0);
@@ -451,12 +452,8 @@ static void hw_accel_dma_handler(void) {
         } else {
             hw_accel_stats.dma_transfer_errors++;
         }
-    }
-    
-    if (dma_channel_get_irq0_status(hw_accel_config.dma_channel_keyboard)) {
+    } else if (channel == hw_accel_config.dma_channel_keyboard) {
         // Keyboard DMA transfer complete
-        dma_channel_acknowledge_irq0(hw_accel_config.dma_channel_keyboard);
-        
         // Process the keyboard data that was transferred via DMA
         hid_keyboard_report_t* report = (hid_keyboard_report_t*)keyboard_dma_buffer;
         bool success = tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(hid_keyboard_report_t));
@@ -532,19 +529,15 @@ static bool hw_accel_setup_dma(void) {
         success = false;
     }
     
-    // Set up DMA interrupt handler
+    // Set up DMA interrupt handler through the unified manager
     if (success) {
-        // Set up interrupt handler for DMA completion
-        irq_set_exclusive_handler(DMA_IRQ_0, hw_accel_dma_handler);
+        // Register interrupt handler for DMA completion through the manager
+        dma_manager_register_irq_handler(hw_accel_config.dma_channel_mouse, hw_accel_dma_handler);
+        dma_manager_register_irq_handler(hw_accel_config.dma_channel_keyboard, hw_accel_dma_handler);
         
-        // Enable interrupt for mouse DMA channel
-        dma_channel_set_irq0_enabled(hw_accel_config.dma_channel_mouse, true);
-        
-        // Enable interrupt for keyboard DMA channel
-        dma_channel_set_irq0_enabled(hw_accel_config.dma_channel_keyboard, true);
-        
-        // Enable the DMA interrupt at the processor level
-        irq_set_enabled(DMA_IRQ_0, true);
+        // Enable interrupts for both channels through the manager
+        dma_manager_enable_channel_irq(hw_accel_config.dma_channel_mouse, 0);   // Use DMA_IRQ_0
+        dma_manager_enable_channel_irq(hw_accel_config.dma_channel_keyboard, 0); // Use DMA_IRQ_0
         
         printf("  DMA interrupts configured successfully\n");
     }

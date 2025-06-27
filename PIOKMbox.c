@@ -14,6 +14,8 @@
 #include "hardware/gpio.h"
 #include "hardware/uart.h"
 #include "pico/unique_id.h"
+#include "pico/multicore.h"
+#include "hardware/clocks.h"
 #ifdef RP2350
 #include "rp2350_hw_accel.h"
 #include "rp2350_dma_handler.h"
@@ -354,6 +356,9 @@ static bool initialize_system(void) {
     
     // Initialize DMA manager
     dma_manager_init();
+    
+    // Initialize DMA interrupt system
+    dma_manager_init_interrupts();
     
     // Initialize DMA for HID report processing
     usb_hid_dma_init();

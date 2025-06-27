@@ -48,18 +48,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Build-specific compiler flags
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_options(-g -O0 -Wall -Wextra -Wpedantic)
+    add_compile_options(-g -O0 -Wall -Wextra -Dtypeof=__typeof__ -Dasm=__asm__)
     add_compile_definitions(DEBUG=1)
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options(-O3 -flto -ffunction-sections -fdata-sections)
+    add_compile_options(-O3 -flto -ffunction-sections -fdata-sections -Dtypeof=__typeof__ -Dasm=__asm__)
     add_compile_definitions(NDEBUG)
     add_link_options(-Wl,--gc-sections -flto)
 elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-    add_compile_options(-Os -flto -ffunction-sections -fdata-sections)
+    add_compile_options(-Os -flto -ffunction-sections -fdata-sections -Dtypeof=__typeof__ -Dasm=__asm__)
     add_compile_definitions(NDEBUG)
     add_link_options(-Wl,--gc-sections -flto)
 elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-    add_compile_options(-O2 -g)
+    add_compile_options(-O2 -g -Dtypeof=__typeof__ -Dasm=__asm__)
 endif()
 
 # ==============================================================================
@@ -370,12 +370,16 @@ if(TARGET_CHIP STREQUAL "RP2350")
         PIN_USB_HOST_DP=10
         PIN_USB_HOST_DM=11
         USE_HARDWARE_ACCELERATION=1
+        # RP2350 requires software spin locks due to errata
+        PICO_USE_SW_SPIN_LOCKS=1
     )
 elseif(TARGET_CHIP STREQUAL "RP2040")
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         TARGET_RP2040=1
         PICO_RP2040=1
         RP2040=1
+        # Explicitly disable software spin locks for RP2040
+        PICO_USE_SW_SPIN_LOCKS=0
     )
 endif()
 
@@ -399,8 +403,8 @@ elseif(TARGET_BOARD STREQUAL "seeed_xiao_rp2350")
         PICO_RP2350=1
         RP2350=1
         # XIAO RP2350 specific pin definitions
-        PIN_USB_HOST_DP=9   # D+ pin for USB host
-        PIN_USB_HOST_DM=10   # D- pin for USB host
+        PIN_USB_HOST_DP=3   # D+ pin for USB host
+        PIN_USB_HOST_DM=4   # D- pin for USB host
         USE_HARDWARE_ACCELERATION=1
 
     )
@@ -418,6 +422,8 @@ set(REQUIRED_LIBRARIES
     hardware_watchdog
     pico_unique_id
     pico_multicore
+    hardware_clocks
+    hardware_sync
 )
 
 # USB libraries

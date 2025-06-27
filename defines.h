@@ -380,21 +380,21 @@
 //--------------------------------------------------------------------+
 
 #if ENABLE_VERBOSE_LOGGING
-    #define LOG_VERBOSE(fmt, ...) printf("[VERBOSE] " fmt "\n", ##__VA_ARGS__)
+    #define LOG_VERBOSE(...) printf("[VERBOSE] " __VA_ARGS__), printf("\n")
 #else
-    #define LOG_VERBOSE(fmt, ...) ((void)0)
+    #define LOG_VERBOSE(...) ((void)0)
 #endif
 
 #if ENABLE_INIT_LOGGING
-    #define LOG_INIT(fmt, ...) printf("[INIT] " fmt "\n", ##__VA_ARGS__)
+    #define LOG_INIT(...) printf("[INIT] " __VA_ARGS__), printf("\n")
 #else
-    #define LOG_INIT(fmt, ...) ((void)0)
+    #define LOG_INIT(...) ((void)0)
 #endif
 
 #if ENABLE_ERROR_LOGGING
-    #define LOG_ERROR(fmt, ...) printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
+    #define LOG_ERROR(...) printf("[ERROR] " __VA_ARGS__), printf("\n")
 #else
-    #define LOG_ERROR(fmt, ...) ((void)0)
+    #define LOG_ERROR(...) ((void)0)
 #endif
 
 #endif // DEFINES_CONSOLIDATED_H

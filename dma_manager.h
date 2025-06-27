@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "hardware/dma.h"
+#include "hardware/irq.h"
 #include "pico/mutex.h"
 
 // Total number of DMA channels available on RP2040
@@ -40,11 +41,15 @@ typedef enum {
     DMA_CHANNEL_STATUS_IN_USE
 } dma_channel_status_t;
 
+// DMA interrupt handler function pointer type
+typedef void (*dma_irq_handler_t)(uint channel);
+
 // DMA channel information
 typedef struct {
     dma_channel_status_t status;
     const char* owner;           // String identifier of the module using this channel
     uint8_t core_num;            // Core number that reserved this channel (0 or 1)
+    dma_irq_handler_t irq_handler; // IRQ handler for this specific channel
 } dma_channel_info_t;
 
 /**
@@ -110,5 +115,48 @@ void dma_manager_print_status(void);
  * @return int The assigned channel number, or -1 if no channels available
  */
 int dma_manager_get_core_channel(const char* owner);
+
+/**
+ * @brief Register an IRQ handler for a specific DMA channel
+ * 
+ * @param channel The DMA channel to register a handler for
+ * @param handler The handler function to call when this channel's IRQ fires
+ * @return true if the handler was successfully registered, false if channel not owned
+ */
+bool dma_manager_register_irq_handler(uint channel, dma_irq_handler_t handler);
+
+/**
+ * @brief Unregister an IRQ handler for a specific DMA channel
+ * 
+ * @param channel The DMA channel to unregister the handler for
+ * @return true if the handler was successfully unregistered
+ */
+bool dma_manager_unregister_irq_handler(uint channel);
+
+/**
+ * @brief Initialize DMA interrupt system
+ * 
+ * Sets up the unified DMA interrupt handlers for DMA_IRQ_0 and DMA_IRQ_1
+ * Must be called after dma_manager_init() but before using DMA interrupts
+ */
+void dma_manager_init_interrupts(void);
+
+/**
+ * @brief Enable DMA interrupts for a specific channel
+ * 
+ * @param channel The DMA channel to enable interrupts for
+ * @param irq_num The IRQ number to use (0 for DMA_IRQ_0, 1 for DMA_IRQ_1)
+ * @return true if interrupts were successfully enabled
+ */
+bool dma_manager_enable_channel_irq(uint channel, uint irq_num);
+
+/**
+ * @brief Disable DMA interrupts for a specific channel
+ * 
+ * @param channel The DMA channel to disable interrupts for
+ * @param irq_num The IRQ number to use (0 for DMA_IRQ_0, 1 for DMA_IRQ_1)
+ * @return true if interrupts were successfully disabled
+ */
+bool dma_manager_disable_channel_irq(uint channel, uint irq_num);
 
 #endif // DMA_MANAGER_H

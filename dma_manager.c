@@ -26,6 +26,7 @@ void dma_manager_init(void) {
         dma_channels[i].status = DMA_CHANNEL_STATUS_FREE;
         dma_channels[i].owner = NULL;
         dma_channels[i].core_num = 0xFF; // Invalid core number
+        dma_channels[i].irq_handler = NULL; // No IRQ handler initially
     }
     
     printf("DMA Manager: Initialized with %d channels\n", DMA_NUM_CHANNELS);
@@ -285,4 +286,184 @@ int dma_manager_get_core_channel(const char* owner) {
     mutex_exit(&dma_mutex);
     
     return assigned_channel;
+}
+
+// Static flags to track interrupt initialization
+static bool dma_irq0_initialized = false;
+static bool dma_irq1_initialized = false;
+
+/**
+ * @brief Unified DMA IRQ 0 handler
+ * 
+ * This handler checks which DMA channels have triggered interrupts
+ * and dispatches to the appropriate registered handlers.
+ */
+static void dma_unified_irq0_handler(void) {
+    // Check all channels that use DMA_IRQ_0
+    for (uint channel = 0; channel < DMA_NUM_CHANNELS; channel++) {
+        if (dma_channel_get_irq0_status(channel)) {
+            // Clear the interrupt
+            dma_channel_acknowledge_irq0(channel);
+            
+            // Call the registered handler if one exists
+            if (dma_channels[channel].irq_handler != NULL) {
+                dma_channels[channel].irq_handler(channel);
+            }
+        }
+    }
+}
+
+/**
+ * @brief Unified DMA IRQ 1 handler
+ * 
+ * This handler checks which DMA channels have triggered interrupts
+ * and dispatches to the appropriate registered handlers.
+ */
+static void dma_unified_irq1_handler(void) {
+    // Check all channels that use DMA_IRQ_1
+    for (uint channel = 0; channel < DMA_NUM_CHANNELS; channel++) {
+        if (dma_channel_get_irq1_status(channel)) {
+            // Clear the interrupt
+            dma_channel_acknowledge_irq1(channel);
+            
+            // Call the registered handler if one exists
+            if (dma_channels[channel].irq_handler != NULL) {
+                dma_channels[channel].irq_handler(channel);
+            }
+        }
+    }
+}
+
+// Initialize DMA interrupt system
+void dma_manager_init_interrupts(void) {
+    if (!dma_irq0_initialized) {
+        irq_set_exclusive_handler(DMA_IRQ_0, dma_unified_irq0_handler);
+        irq_set_enabled(DMA_IRQ_0, true);
+        dma_irq0_initialized = true;
+        printf("DMA Manager: Unified DMA_IRQ_0 handler installed\n");
+    }
+    
+    if (!dma_irq1_initialized) {
+        irq_set_exclusive_handler(DMA_IRQ_1, dma_unified_irq1_handler);
+        irq_set_enabled(DMA_IRQ_1, true);
+        dma_irq1_initialized = true;
+        printf("DMA Manager: Unified DMA_IRQ_1 handler installed\n");
+    }
+}
+
+// Register an IRQ handler for a specific DMA channel
+bool dma_manager_register_irq_handler(uint channel, dma_irq_handler_t handler) {
+    bool success = false;
+    
+    // Validate channel number
+    if (channel >= DMA_NUM_CHANNELS) {
+        printf("DMA Manager: Invalid channel number %d for IRQ handler registration\n", channel);
+        return false;
+    }
+    
+    if (handler == NULL) {
+        printf("DMA Manager: NULL handler provided for channel %d\n", channel);
+        return false;
+    }
+    
+    // Lock mutex
+    mutex_enter_blocking(&dma_mutex);
+    
+    // Check if channel is owned by someone
+    if (dma_channels[channel].status == DMA_CHANNEL_STATUS_IN_USE) {
+        dma_channels[channel].irq_handler = handler;
+        success = true;
+        printf("DMA Manager: IRQ handler registered for channel %d (owner: %s)\n", 
+               channel, dma_channels[channel].owner);
+    } else {
+        printf("DMA Manager: Cannot register IRQ handler for unowned channel %d\n", channel);
+    }
+    
+    // Release mutex
+    mutex_exit(&dma_mutex);
+    
+    return success;
+}
+
+// Unregister an IRQ handler for a specific DMA channel
+bool dma_manager_unregister_irq_handler(uint channel) {
+    bool success = false;
+    
+    // Validate channel number
+    if (channel >= DMA_NUM_CHANNELS) {
+        printf("DMA Manager: Invalid channel number %d for IRQ handler unregistration\n", channel);
+        return false;
+    }
+    
+    // Lock mutex
+    mutex_enter_blocking(&dma_mutex);
+    
+    if (dma_channels[channel].irq_handler != NULL) {
+        dma_channels[channel].irq_handler = NULL;
+        success = true;
+        printf("DMA Manager: IRQ handler unregistered for channel %d\n", channel);
+    }
+    
+    // Release mutex
+    mutex_exit(&dma_mutex);
+    
+    return success;
+}
+
+// Enable DMA interrupts for a specific channel
+bool dma_manager_enable_channel_irq(uint channel, uint irq_num) {
+    // Validate channel number
+    if (channel >= DMA_NUM_CHANNELS) {
+        printf("DMA Manager: Invalid channel number %d for IRQ enable\n", channel);
+        return false;
+    }
+    
+    // Validate IRQ number
+    if (irq_num > 1) {
+        printf("DMA Manager: Invalid IRQ number %d (must be 0 or 1)\n", irq_num);
+        return false;
+    }
+    
+    // Check if channel is owned
+    if (dma_channels[channel].status != DMA_CHANNEL_STATUS_IN_USE) {
+        printf("DMA Manager: Cannot enable IRQ for unowned channel %d\n", channel);
+        return false;
+    }
+    
+    // Enable the appropriate interrupt
+    if (irq_num == 0) {
+        dma_channel_set_irq0_enabled(channel, true);
+        printf("DMA Manager: Enabled DMA_IRQ_0 for channel %d\n", channel);
+    } else {
+        dma_channel_set_irq1_enabled(channel, true);
+        printf("DMA Manager: Enabled DMA_IRQ_1 for channel %d\n", channel);
+    }
+    
+    return true;
+}
+
+// Disable DMA interrupts for a specific channel
+bool dma_manager_disable_channel_irq(uint channel, uint irq_num) {
+    // Validate channel number
+    if (channel >= DMA_NUM_CHANNELS) {
+        printf("DMA Manager: Invalid channel number %d for IRQ disable\n", channel);
+        return false;
+    }
+    
+    // Validate IRQ number
+    if (irq_num > 1) {
+        printf("DMA Manager: Invalid IRQ number %d (must be 0 or 1)\n", irq_num);
+        return false;
+    }
+    
+    // Disable the appropriate interrupt
+    if (irq_num == 0) {
+        dma_channel_set_irq0_enabled(channel, false);
+        printf("DMA Manager: Disabled DMA_IRQ_0 for channel %d\n", channel);
+    } else {
+        dma_channel_set_irq1_enabled(channel, false);
+        printf("DMA Manager: Disabled DMA_IRQ_1 for channel %d\n", channel);
+    }
+    
+    return true;
 }

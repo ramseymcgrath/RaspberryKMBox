@@ -1,6 +1,6 @@
 /*
  * TinyUSB Host Task Wrapper with RP2350 Hardware Acceleration
- * 
+ *
  * This file provides a wrapper implementation of tuh_task() that integrates
  * RP2350 hardware acceleration transparently within the standard function.
  */
@@ -27,7 +27,7 @@ extern bool hw_accel_is_enabled(void);
 
 /**
  * @brief Enhanced tuh_task() with integrated RP2350 hardware acceleration
- * 
+ *
  * This function wraps the standard tuh_task() and adds hardware acceleration
  * support when running on RP2350. The acceleration is transparent to the caller.
  */
@@ -44,10 +44,3 @@ void __wrap_tuh_task(void) {
     // This ensures compatibility and handles any operations not covered by acceleration
     __real_tuh_task();
 }
-
-/**
- * @brief Alias for applications that call tuh_task directly
- * 
- * This ensures our wrapped version is called regardless of how the function is invoked.
- */
-void tuh_task(void) __attribute__((alias("__wrap_tuh_task")));

@@ -230,7 +230,8 @@ uint8_t hw_detect_protocol(uint8_t dev_addr, uint8_t instance, uint8_t const* re
         // Check mouse pattern (buttons + x + y coordinates)
         ".check_mouse:                    \n"
         "ldrb r3, [r0, #0]                \n"  // Load first byte (buttons)
-        "and r3, r3, #0xF8                \n"  // Check upper 5 bits (should be 0 for mouse)
+        "mov r2, #0xF8                    \n"  // Load mask into r2
+        "and r3, r3, r2                   \n"  // Check upper 5 bits (should be 0 for mouse)
         "cmp r3, #0                       \n"  // Compare with 0
         "bne .unknown_protocol            \n"  // If not 0, unknown protocol
         "mov r2, #2                       \n"  // Set as mouse
