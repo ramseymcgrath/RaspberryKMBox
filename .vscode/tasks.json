@@ -41,6 +41,78 @@
             "problemMatcher": "$gcc"
         },
         {
+            "label": "Build RP2040 v1",
+            "type": "shell",
+            "command": "./build.sh",
+            "args": ["rp2040", "v1"],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Build RP2040 v2",
+            "type": "shell",
+            "command": "./build.sh",
+            "args": ["rp2040", "v2"],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Build RP2350 v1",
+            "type": "shell",
+            "command": "./build.sh",
+            "args": ["rp2350", "v1"],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Build RP2350 v2",
+            "type": "shell",
+            "command": "./build.sh",
+            "args": ["rp2350", "v2"],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Build Both Targets v1",
+            "type": "shell",
+            "command": "./build.sh",
+            "args": ["both", "v1"],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Build Both Targets v2",
+            "type": "shell",
+            "command": "./build.sh",
+            "args": ["both", "v2"],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
             "label": "Clean Build Both",
             "type": "shell",
             "command": "./build.sh",

@@ -43,6 +43,7 @@ OUTPUT_FILE="PIOKMbox.uf2"
 
 # Default settings
 DEFAULT_TARGET="both"
+DEFAULT_VERSION="v2"
 DEFAULT_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 UART_BAUD=115200
 UART_TX_PIN=0
@@ -85,12 +86,16 @@ print_warning() {
 # Print usage information
 usage() {
   cat << EOF
-${BOLD}Usage:${NC} $0 [target] [options]
+${BOLD}Usage:${NC} $0 [target] [version] [options]
 
 ${BOLD}Targets:${NC}
   rp2040        - Build for RP2040 (Raspberry Pi Pico)
   rp2350        - Build for RP2350 (Raspberry Pi Pico 2)
   both          - Build for both RP2040 and RP2350 (default)
+
+${BOLD}Versions:${NC}
+  v1            - Build version 1 of the firmware
+  v2            - Build version 2 of the firmware (default)
 
 ${BOLD}Options:${NC}
   --clean       - Clean build directories before building
@@ -98,10 +103,10 @@ ${BOLD}Options:${NC}
   --help, -h    - Display this help message
 
 ${BOLD}Examples:${NC}
-  $0                    # Build both targets
-  $0 rp2040             # Build only RP2040
-  $0 rp2350 --clean     # Clean and build only RP2350
-  $0 both --jobs=8      # Build both targets with 8 parallel jobs
+  $0                    # Build both targets with v2
+  $0 rp2040 v1          # Build only RP2040 with v1
+  $0 rp2350 v2 --clean  # Clean and build only RP2350 with v2
+  $0 both v1 --jobs=8   # Build both targets with v1 using 8 parallel jobs
 EOF
   exit 1
 }
@@ -123,16 +128,23 @@ file_exists() {
 # Build a specific target
 build_target() {
   local chip="$1"
+  local version="$2"
   local board="$(get_board_name "$chip")"
   
-  # Use build directory names that match VS Code tasks
+  # Use build directory names that match VS Code tasks and include version
   if [[ "$chip" == "rp2040" ]]; then
-    local build_dir="build-pico"
+    local build_dir="build-pico-${version}"
   else
-    local build_dir="build-pico2"
+    local build_dir="build-pico2-${version}"
   fi
   
-  print_header "Building for $chip (${board})"
+  print_header "Building $version for $chip (${board})"
+  
+  # Check if version directory exists
+  if [[ ! -d "$version" ]]; then
+    print_error "Version directory '$version' not found!"
+    return 1
+  fi
   
   # Clean build directory if requested
   if [[ "$CLEAN" == true ]]; then
@@ -147,10 +159,10 @@ build_target() {
     return 1
   }
   
-  # Configure with CMake
-  echo "Configuring with CMake for $board..."
-  if ! cmake .. -DTARGET_BOARD="$board"; then
-    print_error "CMake configuration failed for $board!"
+  # Configure with CMake, pointing to the version-specific source directory
+  echo "Configuring with CMake for $board using $version sources..."
+  if ! cmake "../$version" -DTARGET_BOARD="$board"; then
+    print_error "CMake configuration failed for $board with $version!"
     popd > /dev/null || true
     return 1
   fi
@@ -158,12 +170,12 @@ build_target() {
   # Build the project
   echo "Building project for $board with $JOBS parallel jobs..."
   if ! make -j"$JOBS"; then
-    print_error "Build failed for $board!"
+    print_error "Build failed for $board with $version!"
     popd > /dev/null || true
     return 1
   fi
   
-  print_success "Build successful for $board!"
+  print_success "Build successful for $board with $version!"
   echo "Generated files in $build_dir:"
   
   # List output files
@@ -178,18 +190,19 @@ build_target() {
 # Flash firmware to a device
 flash_firmware() {
   local chip="$1"
+  local version="$2"
   local board="$(get_board_name "$chip")"
   
-  # Use build directory names that match VS Code tasks
+  # Use build directory names that match VS Code tasks and include version
   if [[ "$chip" == "rp2040" ]]; then
-    local build_dir="build-pico"
+    local build_dir="build-pico-${version}"
   else
-    local build_dir="build-pico2"
+    local build_dir="build-pico2-${version}"
   fi
   
   local firmware_path="$build_dir/$OUTPUT_FILE"
   
-  print_header "Flashing $chip (${board}) firmware"
+  print_header "Flashing $chip (${board}) $version firmware"
   
   # Check if firmware exists
   if ! file_exists "$firmware_path"; then
@@ -200,19 +213,19 @@ flash_firmware() {
   # Check if picotool is available
   if ! command_exists picotool; then
     print_error "Picotool not found. Please install it to flash firmware."
-    print_manual_flash_instructions "$chip"
+    print_manual_flash_instructions "$chip" "$version"
     return 1
   fi
   
   # Try to flash the firmware
   echo "Attempting to flash with picotool..."
   if picotool load "$firmware_path" -fx; then
-    print_success "Firmware flashed successfully for $chip!"
-    print_success "Device should now be running the new $chip firmware."
+    print_success "Firmware flashed successfully for $chip with $version!"
+    print_success "Device should now be running the new $chip $version firmware."
     return 0
   else
-    print_error "Picotool flash failed for $chip."
-    print_manual_flash_instructions "$chip"
+    print_error "Picotool flash failed for $chip with $version."
+    print_manual_flash_instructions "$chip" "$version"
     return 1
   fi
 }
@@ -220,17 +233,18 @@ flash_firmware() {
 # Print manual flashing instructions
 print_manual_flash_instructions() {
   local chip="$1"
+  local version="$2"
   
-  # Use build directory names that match VS Code tasks
+  # Use build directory names that match VS Code tasks and include version
   if [[ "$chip" == "rp2040" ]]; then
-    local build_dir="build-pico"
+    local build_dir="build-pico-${version}"
   else
-    local build_dir="build-pico2"
+    local build_dir="build-pico2-${version}"
   fi
   
   cat << EOF
 
-${BOLD}Manual flashing instructions for $chip:${NC}
+${BOLD}Manual flashing instructions for $chip $version:${NC}
 1. Hold BOOTSEL button while connecting USB
 2. Copy the firmware file to the RPI-RP2 drive:
    ${build_dir}/${OUTPUT_FILE}
@@ -248,6 +262,7 @@ EOF
 
 # Parse command line arguments
 TARGET="$DEFAULT_TARGET"
+VERSION="$DEFAULT_VERSION"
 CLEAN=false
 JOBS="$DEFAULT_JOBS"
 
@@ -255,6 +270,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     rp2040|rp2350|both)
       TARGET="$1"
+      ;;
+    v1|v2)
+      VERSION="$1"
       ;;
     --clean)
       CLEAN=true
@@ -283,9 +301,16 @@ if [[ "$TARGET" != "rp2040" && "$TARGET" != "rp2350" && "$TARGET" != "both" ]]; 
   usage
 fi
 
+# Validate version
+if [[ "$VERSION" != "v1" && "$VERSION" != "v2" ]]; then
+  print_error "Invalid version: $VERSION"
+  usage
+fi
+
 # Print build configuration
 print_header "TinyUSB Dual Host/Device HID Build Script"
 echo "Target: $TARGET"
+echo "Version: $VERSION"
 echo "Parallel jobs: $JOBS"
 [[ "$CLEAN" == true ]] && echo "Clean build requested"
 
@@ -297,61 +322,61 @@ TOTAL_COUNT=0
 case "$TARGET" in
   "rp2040")
     TOTAL_COUNT=1
-    if build_target "rp2040"; then
+    if build_target "rp2040" "$VERSION"; then
       SUCCESS_COUNT=1
       echo ""
-      read -rp "Would you like to flash the RP2040 firmware? (y/n) " response
+      read -rp "Would you like to flash the RP2040 $VERSION firmware? (y/n) " response
       if [[ "$response" =~ ^[Yy]$ ]]; then
-        flash_firmware "rp2040"
+        flash_firmware "rp2040" "$VERSION"
       fi
     fi
     ;;
   "rp2350")
     TOTAL_COUNT=1
-    if build_target "rp2350"; then
+    if build_target "rp2350" "$VERSION"; then
       SUCCESS_COUNT=1
       echo ""
-      read -rp "Would you like to flash the RP2350 firmware? (y/n) " response
+      read -rp "Would you like to flash the RP2350 $VERSION firmware? (y/n) " response
       if [[ "$response" =~ ^[Yy]$ ]]; then
-        flash_firmware "rp2350"
+        flash_firmware "rp2350" "$VERSION"
       fi
     fi
     ;;
   "both")
     TOTAL_COUNT=2
-    if build_target "rp2040"; then
+    if build_target "rp2040" "$VERSION"; then
       SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
     fi
-    if build_target "rp2350"; then
+    if build_target "rp2350" "$VERSION"; then
       SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
     fi
     
     if [[ $SUCCESS_COUNT -gt 0 ]]; then
       echo ""
       echo "Available builds:"
-      file_exists "build-pico/$OUTPUT_FILE" && echo "  - RP2040: build-pico/$OUTPUT_FILE"
-      file_exists "build-pico2/$OUTPUT_FILE" && echo "  - RP2350: build-pico2/$OUTPUT_FILE"
+      file_exists "build-pico-${VERSION}/$OUTPUT_FILE" && echo "  - RP2040 $VERSION: build-pico-${VERSION}/$OUTPUT_FILE"
+      file_exists "build-pico2-${VERSION}/$OUTPUT_FILE" && echo "  - RP2350 $VERSION: build-pico2-${VERSION}/$OUTPUT_FILE"
       
       echo ""
       echo "Select which firmware to flash:"
-      echo "  1) RP2040"
-      echo "  2) RP2350"
+      echo "  1) RP2040 $VERSION"
+      echo "  2) RP2350 $VERSION"
       echo "  3) Skip flashing"
       read -r choice
       
       case $choice in
         1)
-          if file_exists "build-pico/$OUTPUT_FILE"; then
-            flash_firmware "rp2040"
+          if file_exists "build-pico-${VERSION}/$OUTPUT_FILE"; then
+            flash_firmware "rp2040" "$VERSION"
           else
-            print_error "RP2040 build not available"
+            print_error "RP2040 $VERSION build not available"
           fi
           ;;
-        3)
-          if file_exists "build-pico2/$OUTPUT_FILE"; then
-            flash_firmware "rp2350"
+        2)
+          if file_exists "build-pico2-${VERSION}/$OUTPUT_FILE"; then
+            flash_firmware "rp2350" "$VERSION"
           else
-            print_error "RP2350 build not available"
+            print_error "RP2350 $VERSION build not available"
           fi
           ;;
         *)
@@ -381,8 +406,8 @@ if [[ $SUCCESS_COUNT -gt 0 ]]; then
   print_header "Manual Flashing Instructions"
   echo "1. Hold BOOTSEL button while connecting USB"
   echo "2. Copy the appropriate .uf2 file to the RPI-RP2 drive:"
-  file_exists "build-pico/$OUTPUT_FILE" && echo "   - For RP2040: build-pico/$OUTPUT_FILE"
-  file_exists "build-pico2/$OUTPUT_FILE" && echo "   - For RP2350: build-pico2/$OUTPUT_FILE"
+  file_exists "build-pico-${VERSION}/$OUTPUT_FILE" && echo "   - For RP2040 $VERSION: build-pico-${VERSION}/$OUTPUT_FILE"
+  file_exists "build-pico2-${VERSION}/$OUTPUT_FILE" && echo "   - For RP2350 $VERSION: build-pico2-${VERSION}/$OUTPUT_FILE"
   echo "3. The device will reboot and run the firmware"
   
   echo ""
