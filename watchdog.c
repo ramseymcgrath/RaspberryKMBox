@@ -188,10 +188,14 @@ void watchdog_start(void) {
         printf("Stabilization: %d/30 (%.1fs remaining)\n", i+1, (30-i-1) * 0.1f);
         watchdog_core0_heartbeat();  // Send heartbeat during wait
         // Blink LED during extended stabilization - very slow blink
+#ifdef PIN_LED
         gpio_put(PIN_LED, (i % 4 < 2) ? 1 : 0);  // 2 on, 2 off pattern
+#endif
         sleep_ms(100);
     }
+#ifdef PIN_LED
     gpio_put(PIN_LED, 1);  // LED on after stabilization
+#endif
     printf("Extended stabilization complete\n");
     
     if (WATCHDOG_ENABLE_HARDWARE) {
@@ -227,10 +231,14 @@ void watchdog_start(void) {
         printf("Heartbeat rhythm establishment: %d/20 (%.1fs remaining)\n", i+1, (20-i-1) * 0.1f);
         watchdog_core0_heartbeat();  // Send heartbeat during wait
         // Blink LED during heartbeat establishment - medium blink
+#ifdef PIN_LED
         gpio_put(PIN_LED, (i % 3 < 1) ? 1 : 0);  // 1 on, 2 off pattern
+#endif
         sleep_ms(100);
     }
+#ifdef PIN_LED
     gpio_put(PIN_LED, 1);  // LED on after heartbeat establishment
+#endif
     printf("Heartbeat rhythm established\n");
     
     if (g_debug_enabled) {

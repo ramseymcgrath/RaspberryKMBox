@@ -2,12 +2,15 @@
  * KMBox Serial Command Handler
  * Integrates kmbox-commands library with the PIOKMBox firmware
  * Uses dedicated UART1 for KMBox serial input (separate from debug UART0)
+ * On RP2350: Uses PIO UART with dedicated PIO2 for hardware offloading
  */
 
 #include "kmbox_serial_handler.h"
+#include "kmbox_interface.h"
 #include "lib/kmbox-commands/kmbox_commands.h"
 #include "usb_hid.h"
 #include "led_control.h"
+#include "defines.h"
 #include "pico/stdlib.h"
 #include "hardware/uart.h"
 #include "hardware/irq.h"

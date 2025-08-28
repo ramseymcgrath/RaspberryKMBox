@@ -8,13 +8,27 @@
 #ifndef DEFINES_H
 #define DEFINES_H
 
+// Ensure board defaults (like PICO_DEFAULT_* pins) are visible here
+#include "pico/stdlib.h"
+
 //--------------------------------------------------------------------+
 // HARDWARE CONFIGURATION
 //--------------------------------------------------------------------+
-#if PICO_PLATFORM == rp2040
+#if defined(PICO_RP2040)
 #define DEFAULT_CPU_FREQ 240000
-#elif PICO_PLATFORM == rp2350
+#define PIO_COUNT 2
+#define KMBOX_PIO_AVAILABLE 0
+#elif defined(PICO_RP2350) || defined(PICO_RP2350A)
 #define DEFAULT_CPU_FREQ 120000
+#define PIO_COUNT 3
+#define KMBOX_PIO_AVAILABLE 1
+#define KMBOX_PIO_INSTANCE pio2
+#define KMBOX_PIO_SM_RX 0
+#define KMBOX_PIO_SM_TX 1
+#else
+#define DEFAULT_CPU_FREQ 120000
+#define PIO_COUNT 2
+#define KMBOX_PIO_AVAILABLE 0
 #endif
 
 #ifndef CPU_FREQ
@@ -22,16 +36,58 @@
 #endif
 
 // Pin definitions
-#ifndef PIN_USB_HOST_DP
-#define PIN_USB_HOST_DP         (16u)   // PIO USB Host D+ pin
+// Prefer board defaults where available; fall back to explicit pins otherwise
+
+// USB Host DP/DM pin selection (PIO USB)
+#if defined(PICO_DEFAULT_PIO_USB_DP_PIN)
+#define PIN_USB_HOST_DP         PICO_DEFAULT_PIO_USB_DP_PIN
+#elif defined(WAVESHARE_RP2350_USB_A_USB_DP_PIN)
+#define PIN_USB_HOST_DP         WAVESHARE_RP2350_USB_A_USB_DP_PIN
+#elif !defined(PIN_USB_HOST_DP)
+#define PIN_USB_HOST_DP         (16u)   // Default PIO USB Host D+ pin
+#define USB_PIN_CHOICE_FALLBACK 1
 #endif
+
+#if defined(WAVESHARE_RP2350_USB_A_USB_DM_PIN)
+#define PIN_USB_HOST_DM         WAVESHARE_RP2350_USB_A_USB_DM_PIN   // Use board-provided D- when available
+#elif defined(PIN_USB_HOST_DP)
 #ifndef PIN_USB_HOST_DM
-#define PIN_USB_HOST_DM         (17u)   // PIO USB Host D- pin
+#define PIN_USB_HOST_DM         ((unsigned)(PIN_USB_HOST_DP) + (unsigned)(USB_DM_PIN_OFFSET))  // Derive DM from DP if not provided
 #endif
+#else
+#ifndef PIN_USB_HOST_DM
+#define PIN_USB_HOST_DM         (17u)   // Default PIO USB Host D- pin
+#define USB_PIN_CHOICE_FALLBACK 1
+#endif
+#endif
+
+#ifdef USB_PIN_CHOICE_FALLBACK
+// NOTE: No board default USB pins detected; using fallback DP=16/DM=17.
+// Override with -DPIN_USB_HOST_DP=<pin> (and USB_DM_PIN_OFFSET) or select a board that defines PICO_DEFAULT_PIO_USB_DP_PIN.
+#endif
+
 #define PIN_BUTTON              (7u)    // Reset button pin
-#define PIN_USB_5V              (18u)   // Power pin for USB host
-#define PIN_LED                 (13u)   // Status LED pin
-#define PIN_NEOPIXEL            (21u)   // Neopixel data pin
+
+// Optional USB 5V power-enable pin (many boards hard-wire 5V and have no GPIO)
+// If your board exposes a power enable GPIO, define PIN_USB_5V via board config or build flags.
+// When not defined, USB power control is skipped and treated as always-on.
+#ifndef PIN_USB_5V
+#if defined(PICO_DEFAULT_USB_POWER_PIN)
+#define PIN_USB_5V              PICO_DEFAULT_USB_POWER_PIN
+#endif
+#endif
+
+#if defined(PICO_DEFAULT_LED_PIN)
+#define PIN_LED                 PICO_DEFAULT_LED_PIN
+#endif
+
+// Neopixel data pin: prefer board default, fallback to project wiring
+#if defined(PICO_DEFAULT_WS2812_PIN)
+#define PIN_NEOPIXEL            PICO_DEFAULT_WS2812_PIN
+#else
+#define PIN_NEOPIXEL            (21u)
+#endif
+
 #define NEOPIXEL_POWER          (20u)   // Neopixel power pin
 
 // UART configuration for KMBox serial input

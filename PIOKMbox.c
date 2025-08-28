@@ -377,14 +377,25 @@ int main(void) {
     // Small delay for clock stabilization
     sleep_ms(10);
     
-    // Initialize basic GPIO
+    // Configure SMPS mode pin (if provided by board) to reduce 3V3 ripple at light loads
+#ifdef PICO_SMPS_MODE_PIN
+    gpio_init(PICO_SMPS_MODE_PIN);
+    gpio_set_dir(PICO_SMPS_MODE_PIN, GPIO_OUT);
+    gpio_put(PICO_SMPS_MODE_PIN, 1);
+#endif
+
+    // Initialize USB 5V power control GPIO if available
+#ifdef PIN_USB_5V
     gpio_init(PIN_USB_5V);
     gpio_set_dir(PIN_USB_5V, GPIO_OUT);
     gpio_put(PIN_USB_5V, 0);  // Keep USB power OFF initially
+#endif
     
+#ifdef PIN_LED
     gpio_init(PIN_LED);
     gpio_set_dir(PIN_LED, GPIO_OUT);
     gpio_put(PIN_LED, 1);  // Turn on LED
+#endif
     
     printf("=== PIOKMBox Starting ===\n");
     
@@ -396,11 +407,11 @@ int main(void) {
     }
     printf("BOOTTRACE: initialize_system() returned\n");
     
-    // Enable USB host power
+    // Enable USB host power (no-op if PIN_USB_5V is not defined)
     printf("BOOTTRACE: enabling USB host power\n");
     usb_host_enable_power();
     sleep_ms(100);  // Brief power stabilization
-    printf("BOOTTRACE: USB host power enabled\n");
+    printf("BOOTTRACE: USB host power enabled (or always-on)\n");
     
     // Launch core1 first (like the working example)
     printf("BOOTTRACE: launching core1 for USB host...\n");

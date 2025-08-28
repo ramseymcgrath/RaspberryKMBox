@@ -180,6 +180,7 @@ static bool is_time_elapsed(uint32_t start_time, uint32_t duration_ms)
 
 void led_blinking_task(void)
 {
+#ifdef PIN_LED
     // Skip if blinking is disabled
     if (g_led_controller.blink_interval_ms == 0) {
         return;
@@ -196,6 +197,10 @@ void led_blinking_task(void)
     g_led_controller.last_blink_time = current_time;
     g_led_controller.led_state = !g_led_controller.led_state;
     gpio_put(PIN_LED, g_led_controller.led_state);
+#else
+    // Heartbeat LED disabled (no PIN_LED defined)
+    (void)g_led_controller;
+#endif
 }
 
 void led_set_blink_interval(uint32_t interval_ms)
@@ -220,9 +225,11 @@ void neopixel_init(void)
     }
 
     // Initialize LED pin
+#ifdef PIN_LED
     gpio_init(PIN_LED);
     gpio_set_dir(PIN_LED, GPIO_OUT);
     gpio_put(PIN_LED, 0);
+#endif
 
     // Initialize neopixel power pin but keep it OFF during early boot
     gpio_init(NEOPIXEL_POWER);

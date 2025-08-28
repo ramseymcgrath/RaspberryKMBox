@@ -1,0 +1,88 @@
+;
+; PIO UART Implementation for KMBox Interface
+; Optimized for RP2350's third PIO block offloading
+;
+
+.program uart_rx_mini
+
+; Minimal 8-bit UART receiver
+; IN pin 0 is mapped to the GPIO used as UART RX.
+; Autopush must be enabled with threshold 8 (default for UART apps)
+start:
+    wait 0 pin 0        ; Wait for start bit
+    set x, 7    [7]     ; Load bit counter, delay 1.5 bit periods (reduced from 10 to 7)
+bitloop:
+    in pins, 1          ; Sample bit
+    jmp x-- bitloop [6] ; Loop, delay 1 bit period
+    jmp pin good_stop   ; Check stop bit
+    irq 4 rel           ; Either a framing error or a break. Set a sticky flag,
+    wait 1 pin 0        ; and wait for line to return to idle state.
+    jmp start           ; Don't push data if we didn't see good framing.
+good_stop:
+    push                ; Push when stop bit is received
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void uart_rx_mini_program_init(PIO pio, uint sm, uint offset, uint pin, uint baud) {
+    pio_sm_set_pins_with_mask(pio, sm, 1u << pin, 1u << pin);
+    pio_sm_set_pindirs_with_mask(pio, sm, 0, 1u << pin);
+    pio_gpio_init(pio, pin);
+
+    pio_sm_config c = uart_rx_mini_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, pin);
+    sm_config_set_jmp_pin(&c, pin);
+    sm_config_set_in_shift(&c, false, true, 8);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+
+    float div = (float)clock_get_hz(clk_sys) / (8 * baud);
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline char uart_rx_mini_program_getc(PIO pio, uint sm) {
+    return (char)pio_sm_get_blocking(pio, sm);
+}
+
+%}
+
+.program uart_tx
+
+; 8-bit UART transmitter
+; OUT pin 0 is mapped to the GPIO used as UART TX.
+; No parity bit. 1 stop bit.
+pull                        ; Get data from TX FIFO
+set pins, 1         [7]     ; Assert stop bit, or stall with line in idle state
+loop:
+    out pins, 1             ; Shift 1 bit from OSR to the first OUT pin
+    jmp !osre loop   [6]    ; Jump if output shift register not empty
+    nop              [6]    ; Optional stop bit(s)
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void uart_tx_program_init(PIO pio, uint sm, uint offset, uint pin, uint baud) {
+    pio_sm_set_pins_with_mask(pio, sm, 1u << pin, 1u << pin);
+    pio_sm_set_pindirs_with_mask(pio, sm, 1u << pin, 1u << pin);
+    pio_gpio_init(pio, pin);
+
+    pio_sm_config c = uart_tx_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, pin, 1);
+    sm_config_set_set_pins(&c, pin, 1);
+    sm_config_set_out_shift(&c, true, false, 8);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+
+    float div = (float)clock_get_hz(clk_sys) / (8 * baud);
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void uart_tx_program_putc(PIO pio, uint sm, char c) {
+    pio_sm_put_blocking(pio, sm, (uint32_t)c);
+}
+
+%}

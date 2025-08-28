@@ -333,19 +333,26 @@ static bool init_gpio_pins(void)
     gpio_set_dir(PIN_BUTTON, GPIO_IN);
     gpio_pull_up(PIN_BUTTON);
 
-    // USB 5V power pin initialization but keep it OFF during early boot
+    // USB 5V power pin initialization but keep it OFF during early boot (if available)
+#ifdef PIN_USB_5V
     gpio_init(PIN_USB_5V);
     gpio_set_dir(PIN_USB_5V, GPIO_OUT);
     gpio_put(PIN_USB_5V, 0); // Keep USB power OFF initially for cold boot stability
+#endif
 
     return true;
 }
 
 bool usb_host_enable_power(void)
 {
+#ifdef PIN_USB_5V
     gpio_put(PIN_USB_5V, 1); // Enable USB power
     sleep_ms(100);           // Allow power to stabilize
     return true;
+#else
+    // No power-control GPIO; assume always-on
+    return true;
+#endif
 }
 
 void usb_device_mark_initialized(void)
